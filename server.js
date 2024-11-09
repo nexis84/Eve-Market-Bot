@@ -1,6 +1,10 @@
 const tmi = require('tmi.js');
 const axios = require('axios');
 const Bottleneck = require('bottleneck');
+const express = require('express');
+
+// Set up Express server for Cloud Run
+const app = express();
 
 // Set up rate limiter with Bottleneck
 const limiter = new Bottleneck({
@@ -28,30 +32,23 @@ const defaultRegionDisplayName = 'Jita';
 async function fetchMarketData(itemName, typeID, channel) {
   try {
     console.log(`Fetching market data for ${itemName} (TypeID: ${typeID}) from ${defaultRegionDisplayName}...`);
-
-    // Use the limiter to manage rate-limited API requests
-    const marketRes = await limiter.schedule(() => 
+    const marketRes = await limiter.schedule(() =>
       axios.get(`https://api.adam4eve.eu/v1/market_prices?typeID=${typeID}&regionID=${defaultRegionID}`, {
-        headers: { 'User-Agent': 'TwitchBot (contact@example.com)' } // Replace with actual contact
+        headers: { 'User-Agent': 'TwitchBot (contact@example.com)' }
       })
     );
-
-    // Extract market data
     const marketData = marketRes.data[defaultRegionID];
     if (!marketData || !marketData.sell_price || !marketData.buy_price) {
       client.say(channel, `No active market data for "${itemName}" in ${defaultRegionDisplayName}.`);
       return;
     }
 
-    // Safely parse prices and volumes
     const sellPrice = parseFloat(marketData.sell_price).toLocaleString(undefined, { minimumFractionDigits: 2 });
     const buyPrice = parseFloat(marketData.buy_price).toLocaleString(undefined, { minimumFractionDigits: 2 });
     const sellVolume = (marketData.sell_volume || 'Unavailable').toLocaleString();
     const buyVolume = (marketData.buy_volume || 'Unavailable').toLocaleString();
 
-    // Send formatted message to Twitch chat
     client.say(channel, `Market Info for ${itemName} in ${defaultRegionDisplayName}: Sell Price: ${sellPrice} ISK, Sell Volume: ${sellVolume}, Buy Price: ${buyPrice} ISK, Buy Volume: ${buyVolume}`);
-    
   } catch (error) {
     client.say(channel, `Error fetching data for "${itemName}" in ${defaultRegionDisplayName}: ${error.message}`);
   }
@@ -59,10 +56,9 @@ async function fetchMarketData(itemName, typeID, channel) {
 
 // Function to handle commands from Twitch chat
 client.on('message', (channel, userstate, message, self) => {
-  if (self) return; // Ignore messages from the bot itself
+  if (self) return;
 
   if (message.toLowerCase().startsWith('!market')) {
-    // Remove the '!market' part and trim any extra spaces
     let itemName = message.slice(8).trim();
     console.log('Original command:', message);
     console.log('Item Name:', itemName);
@@ -72,7 +68,6 @@ client.on('message', (channel, userstate, message, self) => {
       return;
     }
 
-    // Fetch the TypeID for the item
     getItemTypeID(itemName)
       .then((typeID) => {
         if (typeID) {
@@ -102,3 +97,14 @@ async function getItemTypeID(itemName) {
     throw new Error('Failed to fetch TypeID');
   }
 }
+
+// Set up health check route for Cloud Run
+app.get('/', (req, res) => {
+  res.send('Eve Market Bot is running!');
+});
+
+// Set the server to listen on the appropriate port
+const port = process.env.PORT || 8080;
+app.listen(port, () => {
+  console.log(`Server listening on port ${port}`);
+});
