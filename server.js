@@ -106,5 +106,5 @@ app.get('/', (req, res) => {
 // Set the server to listen on the appropriate port
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
+  console.log(`Server is running on port ${port}`);
 });
