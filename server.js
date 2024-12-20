@@ -16,7 +16,7 @@ const limiter = new Bottleneck({
 const client = new tmi.Client({
     identity: {
         username: 'eve_market_bot',  // Replace with your bot's username
-        password: 'oauth:6updnryywhgkpt1ycqs5wk6lr3tr0f'  // Replace with your bot's OAuth token
+    password: 'oauth:6updnryywhgkpt1ycqs5wk6lr3tr0f'  // Replace with your bot's OAuth token
     },
     channels: ['ne_x_is', 'contempoenterprises']  // Replace with your Twitch channels
 });
@@ -34,6 +34,7 @@ const typeIDCache = new Map();
 // Location is "region", "station", or "" for global
 const DEFAULT_LOCATION_TYPE = process.env.DEFAULT_LOCATION_TYPE || "";
 const DEFAULT_LOCATION_ID = process.env.DEFAULT_LOCATION_ID || "";
+
 
 // Function to fetch market data for an item
 async function fetchMarketData(itemName, typeID, channel, retryCount = 0) {
@@ -77,6 +78,7 @@ async function fetchMarketData(itemName, typeID, channel, retryCount = 0) {
                     client.say(channel, `❌ Fuzzwork API Temporarily Unavailable for "${itemName}". ❌`);
                     return;
                  }
+                return; // Add this return here.
               } else {
                console.error(`Error fetching market data for "${itemName}" (TypeID: ${typeID}). HTTP Status: ${marketRes.status}, Response: ${JSON.stringify(marketRes.data)}`);
                   client.say(channel, `❌ Error fetching market data for "${itemName}": HTTP ${marketRes.status}. ❌`);
@@ -134,6 +136,7 @@ async function fetchMarketData(itemName, typeID, channel, retryCount = 0) {
                          client.say(channel, `❌ Fuzzwork API Temporarily Unavailable for "${itemName}". ❌`);
                          return;
                       }
+                    return; // Add this return here.
                  } else {
                       console.error(`Error fetching market data for "${itemName}" (TypeID: ${typeID}). HTTP Status: ${error.response.status}, Response: ${JSON.stringify(error.response.data)}`);
                       client.say(channel, `❌ Error fetching market data for "${itemName}": HTTP ${error.response.status}. ❌`);
