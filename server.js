@@ -31,13 +31,14 @@ const USER_AGENT = process.env.USER_AGENT || 'TwitchBot/1.0.0 (contact@example.c
 // Cache for Type IDs
 const typeIDCache = new Map();
 
+
 const JITA_SYSTEM_ID = 30000142; // Jita system ID
 const JITA_REGION_ID = 10000002; // The Forge Region ID
 
 // Function to fetch market data for an item
 async function fetchMarketData(itemName, typeID, channel, retryCount = 0) {
     try {
-       //  console.log(`[fetchMarketData] Start: Fetching market data for ${itemName} (TypeID: ${typeID}), Retry: ${retryCount}`);
+        console.log(`[fetchMarketData] Start: Fetching market data for ${itemName} (TypeID: ${typeID}), Retry: ${retryCount}`);
        return fetchMarketDataFromESI(itemName, typeID, channel, retryCount);
 
 
@@ -48,9 +49,10 @@ async function fetchMarketData(itemName, typeID, channel, retryCount = 0) {
 }
 
 
+
 async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0) {
   try {
-    //  console.log(`[fetchMarketDataFromESI] Start: Fetching market data from ESI for ${itemName} (TypeID: ${typeID}), Retry: ${retryCount}`);
+     // console.log(`[fetchMarketDataFromESI] Start: Fetching market data from ESI for ${itemName} (TypeID: ${typeID}), Retry: ${retryCount}`);
 
       const sellOrdersURL = `https://esi.evetech.net/latest/markets/${JITA_REGION_ID}/orders/?datasource=tranquility&order_type=sell&type_id=${typeID}`;
       const buyOrdersURL = `https://esi.evetech.net/latest/markets/${JITA_REGION_ID}/orders/?datasource=tranquility&order_type=buy&type_id=${typeID}`;
@@ -66,7 +68,7 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
               });
            }),
            limiter.schedule(() => {
-           //  console.log(`[fetchMarketDataFromESI] Axios Call ESI (Buy Orders) to: ${buyOrdersURL}, Retry: ${retryCount}`);
+              // console.log(`[fetchMarketDataFromESI] Axios Call ESI (Buy Orders) to: ${buyOrdersURL}, Retry: ${retryCount}`);
              return axios.get(buyOrdersURL, {
                 headers: { 'User-Agent': USER_AGENT },
                 validateStatus: function (status) {
@@ -80,7 +82,7 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
         if (sellOrdersRes.status !== 200) {
           console.error(`[fetchMarketDataFromESI] Error fetching sell orders. HTTP Status: ${sellOrdersRes.status}, Response: ${JSON.stringify(sellOrdersRes.data)}`);
           client.say(channel, `❌ Error fetching sell orders for "${itemName}": HTTP ${sellOrdersRes.status}. ❌`);
-        //  console.log(`[fetchMarketDataFromESI] End (Error) - Error fetching Sell orders from ESI, Retry: ${retryCount}`);
+       //   console.log(`[fetchMarketDataFromESI] End (Error) - Error fetching Sell orders from ESI, Retry: ${retryCount}`);
           return;
       }
         if (buyOrdersRes.status !== 200) {
@@ -95,14 +97,14 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
       if (!sellOrders || sellOrders.length === 0) {
           console.error(`[fetchMarketDataFromESI] No sell orders found for "${itemName}" (TypeID: ${typeID}) in Jita`);
            client.say(channel, `❌ No sell orders for "${itemName}" in Jita. ❌`);
-           // console.log(`[fetchMarketDataFromESI] End - No sell orders found from ESI, Retry: ${retryCount}`);
+        //   console.log(`[fetchMarketDataFromESI] End - No sell orders found from ESI, Retry: ${retryCount}`);
             return;
         }
 
       if (!buyOrders || buyOrders.length === 0) {
             console.error(`[fetchMarketDataFromESI] No buy orders found for "${itemName}" (TypeID: ${typeID}) in Jita`);
              client.say(channel, `❌ No buy orders for "${itemName}" in Jita. ❌`);
-             // console.log(`[fetchMarketDataFromESI] End - No buy orders found from ESI, Retry: ${retryCount}`);
+            // console.log(`[fetchMarketDataFromESI] End - No buy orders found from ESI, Retry: ${retryCount}`);
            return;
       }
 
@@ -113,7 +115,7 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
 
          const sellPrice = parseFloat(lowestSellOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2 });
          const buyPrice = parseFloat(highestBuyOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2 });
-          // console.log(`[fetchMarketDataFromESI] Output: Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK, Retry: ${retryCount}`);
+        //   console.log(`[fetchMarketDataFromESI] Output: Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK, Retry: ${retryCount}`);
          client.say(channel, `Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK`);
           // console.log(`[fetchMarketDataFromESI] End (Success) - Success getting data from ESI, Retry: ${retryCount}`);
 
@@ -124,34 +126,34 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
                 if (error.response.status === 503) {
                     const retryDelay = Math.pow(2, retryCount) * 1000; // Exponential backoff
                     console.error(`[fetchMarketDataFromESI] ESI Temporarily Unavailable (503) for "${itemName}" (TypeID: ${typeID}). Retrying in ${retryDelay/1000} seconds...`);
-                    if (retryCount < 3) {
-                        await new Promise(resolve => setTimeout(resolve, retryDelay));
-                         // console.log(`[fetchMarketDataFromESI] Triggering Axios Retry: ${retryCount +1}, Retry: ${retryCount}`);
-                        return fetchMarketDataFromESI(itemName, typeID, channel, retryCount + 1);
-                    } else {
-                        console.error(`[fetchMarketDataFromESI] ESI Unavailable (503) for "${itemName}" (TypeID: ${typeID}) after multiple retries.`);
+                     if (retryCount < 3) {
+                         await new Promise(resolve => setTimeout(resolve, retryDelay));
+                         console.log(`[fetchMarketDataFromESI] Triggering Axios Retry: ${retryCount +1}, Retry: ${retryCount}`);
+                         return fetchMarketDataFromESI(itemName, typeID, channel, retryCount + 1);
+                     } else {
+                         console.error(`[fetchMarketDataFromESI] ESI Unavailable (503) for "${itemName}" (TypeID: ${typeID}) after multiple retries.`);
                          client.say(channel, `❌ ESI Temporarily Unavailable for "${itemName}". ❌`);
-                        //  console.log(`[fetchMarketDataFromESI] End (Catch - 503 - max retries): ESI API Unavailable, Retry: ${retryCount}`);
-                        return;
-                    }
-                   // console.log(`[fetchMarketDataFromESI] End (Catch - 503 - retry): ESI API Unavailable, Retry: ${retryCount}`);
-                  return; // Add this return here.
-                 } else {
+                         console.log(`[fetchMarketDataFromESI] End (Catch - 503 - max retries): ESI API Unavailable, Retry: ${retryCount}`);
+                         return;
+                      }
+                    console.log(`[fetchMarketDataFromESI] End (Catch - 503 - retry): ESI API Unavailable, Retry: ${retryCount}`);
+                     return;
+                } else {
                       console.error(`[fetchMarketDataFromESI] Error fetching market data for "${itemName}" (TypeID: ${typeID}). HTTP Status: ${error.response.status}, Response: ${JSON.stringify(error.response.data)}`);
                       client.say(channel, `❌ Error fetching market data for "${itemName}": HTTP ${error.response.status}. ❌`);
-                     // console.log(`[fetchMarketDataFromESI] End (Catch - Not 200): HTTP ${error.response.status} error from ESI, Retry: ${retryCount}`);
+                      console.log(`[fetchMarketDataFromESI] End (Catch - Not 200): HTTP ${error.response.status} error from ESI, Retry: ${retryCount}`);
                     return;
                 }
             } else {
                 console.error(`[fetchMarketDataFromESI] Error fetching market data for "${itemName}" (TypeID: ${typeID}):`, error.message);
                client.say(channel, `❌ Error fetching data for "${itemName}": ${error.message} ❌`);
-             //  console.log(`[fetchMarketDataFromESI] End (Catch - Error):  ${error.message}, Retry: ${retryCount}`);
+                console.log(`[fetchMarketDataFromESI] End (Catch - Error):  ${error.message}, Retry: ${retryCount}`);
                return;
             }
           }  else {
             console.error(`[fetchMarketDataFromESI] Error fetching market data for "${itemName}":`, error);
              client.say(channel, `❌ Error fetching data for "${itemName}": ${error.message} ❌`);
-            //  console.log(`[fetchMarketDataFromESI] End (Catch - General):  ${error.message}, Retry: ${retryCount}`);
+              console.log(`[fetchMarketDataFromESI] End (Catch - General):  ${error.message}, Retry: ${retryCount}`);
           }
 
   }
@@ -161,14 +163,14 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
 // Function to handle commands from Twitch chat
 client.on('message', (channel, userstate, message, self) => {
     if (self) return;
-   // console.log(`[client.on('message')] Message Received: ${message}`); // Logging message received
+    // console.log(`[client.on('message')] Message Received: ${message}`); // Logging message received
 
      // Check if the message starts with the command !market
     if (message.toLowerCase().startsWith('!market')) {
       // Extract the item name from the message
         let itemName = message.slice(8).trim();
-         console.log('[client.on(\'message\')] Original command:', message);
-         console.log('[client.on(\'message\')] Item Name:', itemName);
+        console.log('[client.on(\'message\')] Original command:', message);
+        console.log('[client.on(\'message\')] Item Name:', itemName);
 
         // Check if the item name is empty
         if (!itemName) {
@@ -228,7 +230,7 @@ async function getItemTypeID(itemName) {
 
            // Fuzzwork API returns the TypeID as the response text (not JSON), so it must be parsed as a string first.
            const typeID = searchRes.data.trim(); // remove leading and trailing whitespace.
-         //  console.log(`[getItemTypeID] TypeID Response (String) for "${itemName}": "${typeID}"`);
+         //   console.log(`[getItemTypeID] TypeID Response (String) for "${itemName}": "${typeID}"`);
 
           // Check if TypeID is a valid number and return if so, if not return null
           if (isNaN(parseInt(typeID))) {
@@ -242,7 +244,7 @@ async function getItemTypeID(itemName) {
         } else if (typeof searchRes.data === 'object') {
            // If the response is an object, it should contain a `typeID`.
             if (searchRes.data && searchRes.data.typeID) {
-             //   console.log(`[getItemTypeID] TypeID Response (JSON) for "${itemName}": ${JSON.stringify(searchRes.data)}`);
+               // console.log(`[getItemTypeID] TypeID Response (JSON) for "${itemName}": ${JSON.stringify(searchRes.data)}`);
                 typeIDCache.set(itemName, searchRes.data.typeID);
                 // console.log(`[getItemTypeID] TypeID Resolved for "${itemName}": "${searchRes.data.typeID}", JSON Response`);
                return searchRes.data.typeID;
