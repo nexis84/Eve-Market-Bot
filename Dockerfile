@@ -1,20 +1,15 @@
-# Use Node.js image as base
-FROM node:16
+FROM node:16-alpine
 
-# Set working directory in container
 WORKDIR /app
 
-# Copy package.json and package-lock.json (if exists)
 COPY package*.json ./
-
-# Install dependencies
 RUN npm install
 
-# Copy all files into the container
 COPY . .
 
-# Expose port for Cloud Run
+USER node
+RUN chown -R node:node /app
+
 EXPOSE 8080
 
-# Run the app using node
-CMD ["node", "server.js"]
+CMD ["node", "index.js"]
