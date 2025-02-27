@@ -1,15 +1,20 @@
-FROM node:16-alpine
+# Use a lightweight Node.js image
+FROM node:20
 
-WORKDIR /app
+# Set working directory
+WORKDIR /usr/src/app
 
+# Copy package files first for better caching
 COPY package*.json ./
+
+# Install dependencies
 RUN npm install
 
+# Copy the rest of the application files
 COPY . .
 
-USER node
-RUN chown -R node:node /app
-
+# Expose the port
 EXPOSE 8080
 
-CMD ["node", "index.js"]
+# Start the application
+CMD ["node", "server.js"]
