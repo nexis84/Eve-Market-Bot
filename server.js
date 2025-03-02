@@ -42,7 +42,7 @@ if (!DISCORD_TOKEN) {
 client.login(DISCORD_TOKEN);
 
 client.on('ready', () => {
-    console.log(`Logged in as ${client.user.tag}!`);
+    console.log(Logged in as ${client.user.tag}!);
 });
 
 // Set a default User Agent if one is not set in the environment variables.
@@ -54,23 +54,23 @@ const typeIDCache = new Map();
 // Function to fetch TypeID for an item name
 async function getItemTypeID(itemName) {
     if (!itemName) {
-        console.error(`Item name is invalid: "${itemName}"`);
+        console.error(Item name is invalid: "${itemName}");
         return null;
     }
     if (typeIDCache.has(itemName)) {
         return typeIDCache.get(itemName);
     }
     try {
-        const response = await axios.get(`https://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(itemName)}`);
+        const response = await axios.get(https://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(itemName)});
         if (response.data.typeID) {
             typeIDCache.set(itemName, response.data.typeID);
             return response.data.typeID;
         } else {
-            console.error(`TypeID not found for "${itemName}"`);
+            console.error(TypeID not found for "${itemName}");
             return null;
         }
     } catch (error) {
-        console.error(`Error fetching TypeID for "${itemName}":`, error);
+        console.error(Error fetching TypeID for "${itemName}":, error);
         return null;
     }
 }
@@ -89,8 +89,8 @@ async function fetchMarketDataTradeHubs(itemName, typeID, channel) {
     const results = [];
     for (const [regionName, regionID] of Object.entries(tradeHubRegions)) {
         try {
-            const sellOrdersURL = `https://esi.evetech.net/latest/markets/${regionID}/orders/?datasource=tranquility&order_type=sell&type_id=${typeID}`;
-            const buyOrdersURL = `https://esi.evetech.net/latest/markets/${regionID}/orders/?datasource=tranquility&order_type=buy&type_id=${typeID}`;
+            const sellOrdersURL = https://esi.evetech.net/latest/markets/${regionID}/orders/?datasource=tranquility&order_type=sell&type_id=${typeID};
+            const buyOrdersURL = https://esi.evetech.net/latest/markets/${regionID}/orders/?datasource=tranquility&order_type=buy&type_id=${typeID};
             
             const [sellOrdersRes, buyOrdersRes] = await Promise.all([
                 limiter.schedule(() => axios.get(sellOrdersURL, { headers: { 'User-Agent': USER_AGENT }, validateStatus: status => status >= 200 && status < 500 })),
@@ -98,7 +98,7 @@ async function fetchMarketDataTradeHubs(itemName, typeID, channel) {
             ]);
 
             if (sellOrdersRes.status !== 200 || buyOrdersRes.status !== 200) {
-                console.error(`[fetchMarketDataTradeHubs] Error fetching data for "${itemName}" in region ${regionName}`);
+                console.error([fetchMarketDataTradeHubs] Error fetching data for "${itemName}" in region ${regionName});
                 continue;
             }
 
@@ -106,7 +106,7 @@ async function fetchMarketDataTradeHubs(itemName, typeID, channel) {
             const buyOrders = buyOrdersRes.data;
 
             if (!sellOrders.length || !buyOrders.length) {
-                results.push(`❌ No market data found for "${itemName}" in ${regionName}. ❌`);
+                results.push(❌ No market data found for "${itemName}" in ${regionName}. ❌);
                 continue;
             }
 
@@ -116,15 +116,12 @@ async function fetchMarketDataTradeHubs(itemName, typeID, channel) {
             const sellPrice = parseFloat(lowestSellOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2 });
             const buyPrice = parseFloat(highestBuyOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2 });
 
-            results.push(`${regionName.toUpperCase()}: Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK`);
+            results.push(${regionName.toUpperCase()}: Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK);
         } catch (error) {
-            console.error(`[fetchMarketDataTradeHubs] Error fetching market data for "${itemName}" in ${regionName}`);
+            console.error([fetchMarketDataTradeHubs] Error fetching market data for "${itemName}" in ${regionName});
         }
     }
-
-    // Prepend the item name to the results
-    const finalMessage = `**Market data for ${itemName}:**\n${results.join('\n')}`;
-    channel.send(finalMessage);
+    channel.send(results.join('\n'));
 }
 
 // Discord message event handler
@@ -143,18 +140,16 @@ client.on('messageCreate', async message => {
             return;
         }
 
-        message.channel.send(`🔍 I will get the market data for "${itemName}". This may take a little while (up to 30 seconds). Please stand by...`);
-
         getItemTypeID(itemName)
             .then(typeID => {
                 if (typeID) {
                     fetchMarketDataTradeHubs(itemName, typeID, message.channel);
                 } else {
-                    message.channel.send(`❌ No TypeID found for "${itemName}". ❌`);
+                    message.channel.send(❌ No TypeID found for "${itemName}". ❌);
                 }
             })
             .catch(error => {
-                message.channel.send(`❌ Error fetching TypeID for "${itemName}": ${error.message} ❌`);
+                message.channel.send(❌ Error fetching TypeID for "${itemName}": ${error.message} ❌);
             });
     }
 });
@@ -174,5 +169,5 @@ app.get('/', (req, res) => {
 // Set the server to listen on the appropriate port
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
+    console.log(Server is running on port ${port});
 });
