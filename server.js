@@ -16,7 +16,7 @@ const limiter = new Bottleneck({
 const client = new tmi.Client({
     identity: {
         username: 'eve_market_bot',  // Replace with your bot's username
-        password: 'oauth:'  // Replace with your bot's OAuth token
+        password: 'oauth:sfjnp0fuz9qq83m92t3wafqrjv8h2x'  // Replace with your bot's OAuth token
     },
     channels: ['ne_x_is', 'contempoenterprises']  // Replace with your Twitch channels
 });
