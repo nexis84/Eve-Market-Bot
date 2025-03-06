@@ -12,16 +12,19 @@ const limiter = new Bottleneck({
     maxConcurrent: 1 // Only one request at a time
 });
 
-// Load environment variables (install dotenv if using locally)
-require('dotenv').config();
+// Ensure OAuth Token is properly set
+if (!process.env.TWITCH_OAUTH_TOKEN) {
+    console.error("Missing TWITCH_OAUTH_TOKEN. Check your environment variables.");
+    process.exit(1);
+}
 
-// Set up Twitch bot configuration
+// Twitch Bot Configuration
 const client = new tmi.Client({
     identity: {
-        username: 'Eve_twitch_market_bot',  // Replace with your bot's username
-        password: process.env.TWITCH_OAUTH_TOKEN   // OAuth token from env
+        username: 'Eve_twitch_market_bot',
+        password: process.env.TWITCH_OAUTH_TOKEN
     },
-    channels: ['ne_x_is', 'contempoenterprises']  // Replace with your Twitch channels
+    channels: ['ne_x_is', 'contempoenterprises']
 });
 
 // Connect the Twitch bot to the chat
