@@ -12,11 +12,14 @@ const limiter = new Bottleneck({
     maxConcurrent: 1 // Only one request at a time
 });
 
+// Load environment variables (install dotenv if using locally)
+require('dotenv').config();
+
 // Set up Twitch bot configuration
 const client = new tmi.Client({
     identity: {
-        username: 'eve_market_bot',  // Replace with your bot's username
-        password: 'oauth:ggjjrtb9q7w0oq8xohlmcf034sgx4x'  // Replace with your bot's OAuth token
+        username: process.env.TWITCH_BOT_USERNAME,  // Bot username from env
+        password: process.env.TWITCH_OAUTH_TOKEN   // OAuth token from env
     },
     channels: ['ne_x_is', 'contempoenterprises']  // Replace with your Twitch channels
 });
