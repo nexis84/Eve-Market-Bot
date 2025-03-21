@@ -188,20 +188,36 @@ client.on('message', (channel, userstate, message, self) => {
 
     // !info command
     if (message.toLowerCase().startsWith('!info')) {
-        // Extract the item name from the message
-        const itemName = message.slice(6).trim();
+        // Extract the item name or ID from the message
+        const itemIdentifier = message.slice(6).trim();
 
-        // Check if the item name is empty
-        if (!itemName) {
-            client.say(channel, '❌ Please specify an item to search for. ❌');
+        // Check if the item name or ID is empty
+        if (!itemIdentifier) {
+            client.say(channel, '❌ Please specify an item name or TypeID. ❌');
             return;
         }
 
-        // Construct the Everef URL
-        const everefURL = `https://everef.net/item/${encodeURIComponent(itemName)}`;
-
-        // Send the URL to the chat
-        client.say(channel, `${itemName} Info: ${everefURL}`);
+        // Check if the itemIdentifier is a number (TypeID)
+        if (!isNaN(parseInt(itemIdentifier))) {
+            // It's a number, so treat it as a TypeID
+            const typeID = parseInt(itemIdentifier);
+            const everefURL = `https://everef.net/type/${typeID}`;
+            client.say(channel, `TypeID ${typeID} Info: ${everefURL}`);
+        } else {
+            // It's not a number, so treat it as an item name.  We still need to get the TypeID to use Everef.
+            getItemTypeID(itemIdentifier)
+                .then(typeID => {
+                    if (typeID) {
+                        const everefURL = `https://everef.net/type/${typeID}`;
+                        client.say(channel, `${itemIdentifier} Info: ${everefURL}`);
+                    } else {
+                        client.say(channel, `❌ Could not find TypeID for "${itemIdentifier}". ❌`);
+                    }
+                })
+                .catch(error => {
+                    client.say(channel, `❌ Error finding TypeID for "${itemIdentifier}": ${error.message} ❌`);
+                });
+        }
     }
 });
 
@@ -216,9 +232,10 @@ async function getItemTypeID(itemName) {
 
      try {
          // Fetch the typeID using the fuzzwork api
+         let cleanItemName = itemName.replace(/[^a-zA-Z0-9\s]/g, '');
          const searchRes = await limiter.schedule(() => {
         //     console.log(`[getItemTypeID] Axios Call to Fuzzwork TypeID: ${itemName}`);
-              return axios.get(`http://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(itemName)}`, {
+              return axios.get(`http://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(cleanItemName)}`, {
                   headers: { 'User-Agent': USER_AGENT }
               });
          });
@@ -269,7 +286,6 @@ async function getItemTypeID(itemName) {
          return null; // Return null in case of any other error
      }
 }
-
 // Set up health check route for Cloud Run
 app.get('/', (req, res) => {
     res.send('Eve Market Bot is running!');
