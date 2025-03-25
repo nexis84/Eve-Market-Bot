@@ -41,108 +41,78 @@ const combatSiteCache = new Map();
 const JITA_SYSTEM_ID = 30000142; // Jita system ID
 const JITA_REGION_ID = 10000002; // The Forge Region ID
 
-// Combat site data
+// Combat site data (simplified for demonstration)
 const combatSites = {
-    "Angel Cartel Hideaway": "https://wiki.eveuniversity.org/Angel_Cartel_Hideaway",
+    "Angel Cartel Hideout": "https://wiki.eveuniversity.org/Angel_Cartel_Hideout",
+    "Angel Cartel Refuge": "https://wiki.eveuniversity.org/Angel_Cartel_Refuge",
     "Angel Hideaway": "https://wiki.eveuniversity.org/Angel_Hideaway",
-    "Angel Cartel Den": "https://wiki.eveuniversity.org/Angel_Cartel_Den",
-    "Angel Den": "https://wiki.eveuniversity.org/Angel_Den",
-    "Angel Cartel Rally Point": "https://wiki.eveuniversity.org/Angel_Cartel_Rally_Point",
-    "Angel Rally Point": "https://wiki.eveuniversity.org/Angel_Rally_Point",
-    "Angel Cartel Staging Point": "https://wiki.eveuniversity.org/Angel_Cartel_Staging_Point",
-    "Angel Staging Point": "https://wiki.eveuniversity.org/Angel_Staging_Point",
-    "Angel Cartel Yard": "https://wiki.eveuniversity.org/Angel_Cartel_Yard",
-    "Angel Yard": "https://wiki.eveuniversity.org/Angel_Yard",
-    "Angel Cartel Forlorn Hideaway": "https://wiki.eveuniversity.org/Angel_Cartel_Forlorn_Hideaway",
-    "Angel Forlorn Hideaway": "https://wiki.eveuniversity.org/Angel_Forlorn_Hideaway",
-    "Angel Cartel Forlorn Den": "https://wiki.eveuniversity.org/Angel_Cartel_Forlorn_Den",
-    "Angel Forlorn Den": "https://wiki.eveuniversity.org/Angel_Forlorn_Den",
-    "Angel Cartel Forlorn Rally Point": "https://wiki.eveuniversity.org/Angel_Cartel_Forlorn_Rally_Point",
-    "Angel Forlorn Rally Point": "https://wiki.eveuniversity.org/Angel_Forlorn_Rally_Point",
-    "Angel Cartel Forlorn Staging Point": "https://wiki.eveuniversity.org/Angel_Cartel_Forlorn_Staging_Point",
-    "Angel Forlorn Staging Point": "https://wiki.eveuniversity.org/Angel_Forlorn_Staging_Point",
-    "Angel Cartel Forlorn Yard": "https://wiki.eveuniversity.org/Angel_Cartel_Forlorn_Yard",
-    "Angel Forlorn Yard": "https://wiki.eveuniversity.org/Angel_Forlorn_Yard",
-    "Angel Cartel Forsaken Hideaway": "https://wiki.eveuniversity.org/Angel_Cartel_Forsaken_Hideaway",
-    "Angel Forsaken Hideaway": "https://wiki.eveuniversity.org/Angel_Forsaken_Hideaway",
-    "Angel Cartel Forsaken Den": "https://wiki.eveuniversity.org/Angel_Cartel_Forsaken_Den",
-    "Angel Forsaken Den": "https://wiki.eveuniversity.org/Angel_Forsaken_Den",
-    "Angel Cartel Forsaken Rally Point": "https://wiki.eveuniversity.org/Angel_Cartel_Forsaken_Rally_Point",
-    "Angel Forsaken Rally Point": "https://wiki.eveuniversity.org/Angel_Forsaken_Rally_Point",
-    "Angel Cartel Forsaken Staging Point": "https://wiki.eveuniversity.org/Angel_Cartel_Forsaken_Staging_Point",
-    "Angel Forsaken Staging Point": "https://wiki.eveuniversity.org/Angel_Forsaken_Staging_Point",
-    "Angel Cartel Forsaken Yard": "https://wiki.eveuniversity.org/Angel_Cartel_Forsaken_Yard",
-    "Angel Forsaken Yard": "https://wiki.eveuniversity.org/Angel_Forsaken_Yard",
+    "Angel Refuge": "https://wiki.eveuniversity.org/Angel_Refuge",
+    "Angel Stash": "https://wiki.eveuniversity.org/Angel_Stash",
+    "Blood Raider Hideout": "https://wiki.eveuniversity.org/Blood_Raider_Hideout",
+    "Blood Raider Refuge": "https://wiki.eveuniversity.org/Blood_Raider_Refuge",
     "Blood Raider Hideaway": "https://wiki.eveuniversity.org/Blood_Raider_Hideaway",
-    "Blood Raider Den": "https://wiki.eveuniversity.org/Blood_Raider_Den",
-    "Blood Raider Rally Point": "https://wiki.eveuniversity.org/Blood_Raider_Rally_Point",
-    "Blood Raider Staging Point": "https://wiki.eveuniversity.org/Blood_Raider_Staging_Point",
-    "Blood Raider Yard": "https://wiki.eveuniversity.org/Blood_Raider_Yard",
-    "Blood Raider Forlorn Hideaway": "https://wiki.eveuniversity.org/Blood_Raider_Forlorn_Hideaway",
-    "Blood Raider Forlorn Den": "https://wiki.eveuniversity.org/Blood_Raider_Forlorn_Den",
-    "Blood Raider Forlorn Rally Point": "https://wiki.eveuniversity.org/Blood_Raider_Forlorn_Rally_Point",
-    "Blood Raider Forlorn Staging Point": "https://wiki.eveuniversity.org/Blood_Raider_Forlorn_Staging_Point",
-    "Blood Raider Forlorn Yard": "https://wiki.eveuniversity.org/Blood_Raider_Forlorn_Yard",
-    "Blood Raider Forsaken Hideaway": "https://wiki.eveuniversity.org/Blood_Raider_Forsaken_Hideaway",
-    "Blood Raider Forsaken Den": "https://wiki.eveuniversity.org/Blood_Raider_Forsaken_Den",
-    "Blood Raider Forsaken Rally Point": "https://wiki.eveuniversity.org/Blood_Raider_Forsaken_Rally_Point",
-    "Blood Raider Forsaken Staging Point": "https://wiki.eveuniversity.org/Blood_Raider_Forsaken_Staging_Point",
-    "Blood Raider Forsaken Yard": "https://wiki.eveuniversity.org/Blood_Raider_Forsaken_Yard",
+    "Blood Raider Refuge": "https://wiki.eveuniversity.org/Blood_Raider_Refuge",
+    "Blood Raider Stash": "https://wiki.eveuniversity.org/Blood_Raider_Stash",
+    "Guristas Hideout": "https://wiki.eveuniversity.org/Guristas_Hideout",
+    "Guristas Refuge": "https://wiki.eveuniversity.org/Guristas_Refuge",
     "Guristas Hideaway": "https://wiki.eveuniversity.org/Guristas_Hideaway",
-    "Guristas Den": "https://wiki.eveuniversity.org/Guristas_Den",
-    "Guristas Rally Point": "https://wiki.eveuniversity.org/Guristas_Rally_Point",
-    "Guristas Staging Point": "https://wiki.eveuniversity.org/Guristas_Staging_Point",
-    "Guristas Yard": "https://wiki.eveuniversity.org/Guristas_Yard",
-    "Guristas Forlorn Hideaway": "https://wiki.eveuniversity.org/Guristas_Forlorn_Hideaway",
-    "Guristas Forlorn Den": "https://wiki.eveuniversity.org/Guristas_Forlorn_Den",
-    "Guristas Forlorn Rally Point": "https://wiki.eveuniversity.org/Guristas_Forlorn_Rally_Point",
-    "Guristas Forlorn Staging Point": "https://wiki.eveuniversity.org/Guristas_Forlorn_Staging_Point",
-    "Guristas Forlorn Yard": "https://wiki.eveuniversity.org/Guristas_Forlorn_Yard",
-    "Guristas Forsaken Hideaway": "https://wiki.eveuniversity.org/Guristas_Forsaken_Hideaway",
-    "Guristas Forsaken Den": "https://wiki.eveuniversity.org/Guristas_Forsaken_Den",
-    "Guristas Forsaken Rally Point": "https://wiki.eveuniversity.org/Guristas_Forsaken_Rally_Point",
-    "Guristas Forsaken Staging Point": "https://wiki.eveuniversity.org/Guristas_Forsaken_Staging_Point",
-    "Guristas Forsaken Yard": "https://wiki.eveuniversity.org/Guristas_Forsaken_Yard",
+    "Guristas Refuge": "https://wiki.eveuniversity.org/Guristas_Refuge",
+    "Guristas Stash": "https://wiki.eveuniversity.org/Guristas_Stash",
+    "Sansha Hideout": "https://wiki.eveuniversity.org/Sansha_Hideout",
+    "Sansha Refuge": "https://wiki.eveuniversity.org/Sansha_Refuge",
     "Sansha Hideaway": "https://wiki.eveuniversity.org/Sansha_Hideaway",
-    "Sansha Den": "https://wiki.eveuniversity.org/Sansha_Den",
-    "Sansha Rally Point": "https://wiki.eveuniversity.org/Sansha_Rally_Point",
-    "Sansha Staging Point": "https://wiki.eveuniversity.org/Sansha_Staging_Point",
-    "Sansha Yard": "https://wiki.eveuniversity.org/Sansha_Yard",
-    "Sansha Forlorn Hideaway": "https://wiki.eveuniversity.org/Sansha_Forlorn_Hideaway",
-    "Sansha Forlorn Den": "https://wiki.eveuniversity.org/Sansha_Forlorn_Den",
-    "Sansha Forlorn Rally Point": "https://wiki.eveuniversity.org/Sansha_Forlorn_Rally_Point",
-    "Sansha Forlorn Staging Point": "https://wiki.eveuniversity.org/Sansha_Forlorn_Staging_Point",
-    "Sansha Forlorn Yard": "https://wiki.eveuniversity.org/Sansha_Forlorn_Yard",
-    "Sansha Forsaken Hideaway": "https://wiki.eveuniversity.org/Sansha_Forsaken_Hideaway",
-    "Sansha Forsaken Den": "https://wiki.eveuniversity.org/Sansha_Forsaken_Den",
-    "Sansha Forsaken Rally Point": "https://wiki.eveuniversity.org/Sansha_Forsaken_Rally_Point",
-    "Sansha Forsaken Staging Point": "https://wiki.eveuniversity.org/Sansha_Forsaken_Staging_Point",
-    "Sansha Forsaken Yard": "https://wiki.eveuniversity.org/Sansha_Forsaken_Yard",
+    "Sansha Refuge": "https://wiki.eveuniversity.org/Sansha_Refuge",
+    "Sansha Stash": "https://wiki.eveuniversity.org/Sansha_Stash",
+    "Serpentis Hideout": "https://wiki.eveuniversity.org/Serpentis_Hideout",
+    "Serpentis Refuge": "https://wiki.eveuniversity.org/Serpentis_Refuge",
     "Serpentis Hideaway": "https://wiki.eveuniversity.org/Serpentis_Hideaway",
-    "Serpentis Den": "https://wiki.eveuniversity.org/Serpentis_Den",
-    "Serpentis Rally Point": "https://wiki.eveuniversity.org/Serpentis_Rally_Point",
-    "Serpentis Staging Point": "https://wiki.eveuniversity.org/Serpentis_Staging_Point",
-    "Serpentis Yard": "https://wiki.eveuniversity.org/Serpentis_Yard",
-    "Serpentis Forlorn Hideaway": "https://wiki.eveuniversity.org/Serpentis_Forlorn_Hideaway",
-    "Serpentis Forlorn Den": "https://wiki.eveuniversity.org/Serpentis_Forlorn_Den",
-    "Serpentis Forlorn Rally Point": "https://wiki.eveuniversity.org/Serpentis_Forlorn_Rally_Point",
-    "Serpentis Forlorn Staging Point": "https://wiki.eveuniversity.org/Serpentis_Forlorn_Staging_Point",
+    "Serpentis Refuge": "https://wiki.eveuniversity.org/Serpentis_Refuge",
+    "Serpentis Stash": "https://wiki.eveuniversity.org/Serpentis_Stash",
+    "Angel Forlorn Hideout": "https://wiki.eveuniversity.org/Angel_Forlorn_Hideout",
+    "Angel Forlorn Hub": "https://wiki.eveuniversity.org/Angel_Forlorn_Hub",
+    "Angel Forlorn Yard": "https://wiki.eveuniversity.org/Angel_Forlorn_Yard",
+    "Angel Forsaken Hideout": "https://wiki.eveuniversity.org/Angel_Forsaken_Hideout",
+    "Angel Forsaken Hub": "https://wiki.eveuniversity.org/Angel_Forsaken_Hub",
+    "Angel Forsaken Yard": "https://wiki.eveuniversity.org/Angel_Forsaken_Yard",
+    "Blood Raider Forlorn Hideout": "https://wiki.eveuniversity.org/Blood_Raider_Forlorn_Hideout",
+    "Blood Raider Forlorn Hub": "https://wiki.eveuniversity.org/Blood_Raider_Forlorn_Hub",
+    "Blood Raider Forlorn Yard": "https://wiki.eveuniversity.org/Blood_Raider_Forlorn_Yard",
+    "Blood Raider Forsaken Hideout": "https://wiki.eveuniversity.org/Blood_Raider_Forsaken_Hideout",
+    "Blood Raider Forsaken Hub": "https://wiki.eveuniversity.org/Blood_Raider_Forsaken_Hub",
+    "Blood Raider Forsaken Yard": "https://wiki.eveuniversity.org/Blood_Raider_Forsaken_Yard",
+    "Guristas Forlorn Hideout": "https://wiki.eveuniversity.org/Guristas_Forlorn_Hideout",
+    "Guristas Forlorn Hub": "https://wiki.eveuniversity.org/Guristas_Forlorn_Hub",
+    "Guristas Forlorn Yard": "https://wiki.eveuniversity.org/Guristas_Forlorn_Yard",
+    "Guristas Forsaken Hideout": "https://wiki.eveuniversity.org/Guristas_Forsaken_Hideout",
+    "Guristas Forsaken Hub": "https://wiki.eveuniversity.org/Guristas_Forsaken_Hub",
+    "Guristas Forsaken Yard": "https://wiki.eveuniversity.org/Guristas_Forsaken_Yard",
+    "Sansha Forlorn Hideout": "https://wiki.eveuniversity.org/Sansha_Forlorn_Hideout",
+    "Sansha Forlorn Hub": "https://wiki.eveuniversity.org/Sansha_Forlorn_Hub",
+    "Sansha Forlorn Yard": "https://wiki.eveuniversity.org/Sansha_Forlorn_Yard",
+    "Sansha Forsaken Hideout": "https://wiki.eveuniversity.org/Sansha_Forsaken_Hideout",
+    "Sansha Forsaken Hub": "https://wiki.eveuniversity.org/Sansha_Forsaken_Hub",
+    "Sansha Forsaken Yard": "https://wiki.eveuniversity.org/Sansha_Forsaken_Yard",
+    "Serpentis Forlorn Hideout": "https://wiki.eveuniversity.org/Serpentis_Forlorn_Hideout",
+    "Serpentis Forlorn Hub": "https://wiki.eveuniversity.org/Serpentis_Forlorn_Hub",
     "Serpentis Forlorn Yard": "https://wiki.eveuniversity.org/Serpentis_Forlorn_Yard",
-    "Serpentis Forsaken Hideaway": "https://wiki.eveuniversity.org/Serpentis_Forsaken_Hideaway",
-    "Serpentis Forsaken Den": "https://wiki.eveuniversity.org/Serpentis_Forsaken_Den",
-    "Serpentis Forsaken Rally Point": "https://wiki.eveuniversity.org/Serpentis_Forsaken_Rally_Point",
-    "Serpentis Forsaken Staging Point": "https://wiki.eveuniversity.org/Serpentis_Forsaken_Staging_Point",
+    "Serpentis Forsaken Hideout": "https://wiki.eveuniversity.org/Serpentis_Forsaken_Hideout",
+    "Serpentis Forsaken Hub": "https://wiki.eveuniversity.org/Serpentis_Forsaken_Hub",
     "Serpentis Forsaken Yard": "https://wiki.eveuniversity.org/Serpentis_Forsaken_Yard",
-    "Angel Haven": "https://wiki.eveuniversity.org/Angel_Haven",
-    "Blood Raider Haven": "https://wiki.eveuniversity.org/Blood_Raider_Haven",
-    "Guristas Haven": "https://wiki.eveuniversity.org/Guristas_Haven",
-    "Sansha Haven": "https://wiki.eveuniversity.org/Sansha_Haven",
-    "Serpentis Haven": "https://wiki.eveuniversity.org/Serpentis_Haven",
-    "Angel Sanctum": "https://wiki.eveuniversity.org/Angel_Sanctum",
-    "Blood Raider Sanctum": "https://wiki.eveuniversity.org/Blood_Raider_Sanctum",
-    "Guristas Sanctum": "https://wiki.eveuniversity.org/Guristas_Sanctum",
-    "Sansha Sanctum": "https://wiki.eveuniversity.org/Sansha_Sanctum",
-    "Serpentis Sanctum": "https://wiki.eveuniversity.org/Serpentis_Sanctum"
+    "Angel Hideout": "https://wiki.eveuniversity.org/Angel_Hideout",
+    "Angel Hub": "https://wiki.eveuniversity.org/Angel_Hub",
+    "Angel Yard": "https://wiki.eveuniversity.org/Angel_Yard",
+    "Blood Raider Hideout": "https://wiki.eveuniversity.org/Blood_Raider_Hideout",
+    "Blood Raider Hub": "https://wiki.eveuniversity.org/Blood_Raider_Hub",
+    "Blood Raider Yard": "https://wiki.eveuniversity.org/Blood_Raider_Yard",
+    "Guristas Hideout": "https://wiki.eveuniversity.org/Guristas_Hideout",
+    "Guristas Hub": "https://wiki.eveuniversity.org/Guristas_Hub",
+    "Guristas Yard": "https://wiki.eveuniversity.org/Guristas_Yard",
+    "Sansha Hideout": "https://wiki.eveuniversity.org/Sansha_Hideout",
+    "Sansha Hub": "https://wiki.eveuniversity.org/Sansha_Hub",
+    "Sansha Yard": "https://wiki.eveuniversity.org/Sansha_Yard",
+    "Serpentis Hideout": "https://wiki.eveuniversity.org/Serpentis_Hideout",
+    "Serpentis Hub": "https://wiki.eveuniversity.org/Serpentis_Hub",
+    "Serpentis Yard": "https://wiki.eveuniversity.org/Serpentis_Yard",
 };
 
 // Function to fetch market data for an item
@@ -214,7 +184,7 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
 
         const sellPrice = parseFloat(lowestSellOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2 });
         const buyPrice = parseFloat(highestBuyOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2 });
-        //        console.log(`[fetchMarketDataFromESI] Output: Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK, Retry: ${retryCount}`);
+        //    console.log(`[fetchMarketDataFromESI] Output: Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK, Retry: ${retryCount}`);
         client.say(channel, `Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK`);
         // console.log(`[fetchMarketDataFromESI] End (Success) - Success getting data from ESI, Retry: ${retryCount}`);
 
@@ -315,9 +285,8 @@ client.on('message', (channel, userstate, message, self) => {
     }
     // !info command
     if (message.toLowerCase().startsWith('!info')) {
-        const itemName = message.slice(6).trim(); // Remove "!info " and get the item name
-        console.log('[client.on(\'message\')] !info command:', message);
-        console.log('[client.on(\'message\')] Item Name:', itemName);
+        const itemName = message.slice(6).trim(); // Remove '!info ' and get the item name
+        console.log(`[client.on('message')] !info command, Item Name: ${itemName}`);
 
         if (!itemName) {
             client.say(channel, '❌ Please specify an item to search for. ❌');
@@ -327,14 +296,15 @@ client.on('message', (channel, userstate, message, self) => {
         getItemTypeID(itemName)
             .then((typeID) => {
                 if (typeID) {
-                    const everefURL = `https://everef.net/?type=${typeID}`;
-                    client.say(channel, `${itemName} info: ${everefURL}`);
+                    const eveRefUrl = `https://everef.net/?type=${typeID}`;
+                    client.say(channel, `${itemName} info: ${eveRefUrl}`);
                 } else {
                     client.say(channel, `❌ No TypeID found for "${itemName}". ❌`);
                 }
             })
             .catch((error) => {
                 client.say(channel, `❌ Error fetching TypeID for "${itemName}": ${error.message} ❌`);
+                console.error(`[client.on('message')] Error fetching TypeID:`, error);
             });
     }
 });
@@ -352,7 +322,7 @@ async function getItemTypeID(itemName) {
         // Fetch the typeID using the fuzzwork api
         let cleanItemName = itemName.replace(/[^a-zA-Z0-9\s]/g, '');
         const searchRes = await limiter.schedule(() => {
-            // console.log(`[getItemTypeID] Axios Call to Fuzzwork TypeID: ${itemName}`);
+            //  console.log(`[getItemTypeID] Axios Call to Fuzzwork TypeID: ${itemName}`);
             return axios.get(`http://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(cleanItemName)}`, {
                 headers: { 'User-Agent': USER_AGENT }
             });
@@ -360,4 +330,57 @@ async function getItemTypeID(itemName) {
 
 
         // Handle non-200 status codes
-        if (searchRes.status 
+        if (searchRes.status !== 200) {
+            console.error(`[getItemTypeID] Error fetching TypeID for "${itemName}": HTTP ${searchRes.status}. Response was: ${JSON.stringify(searchRes.data)}`);
+            return null;
+        }
+
+        // Check if the response is a string or an object.
+        if (typeof searchRes.data === 'string') {
+
+            // Fuzzwork API returns the TypeID as the response text (not JSON), so it must be parsed as a string first.
+            const typeID = searchRes.data.trim(); // remove leading and trailing whitespace.
+            //  console.log(`[getItemTypeID] TypeID Response (String) for "${itemName}": "${typeID}"`);
+
+            // Check if TypeID is a valid number and return if so, if not return null
+            if (isNaN(parseInt(typeID))) {
+                console.error(`[getItemTypeID] TypeID not found for "${itemName}". Response Data: "${typeID}"`)
+                return null;
+            }
+            typeIDCache.set(itemName, parseInt(typeID, 10));
+            //  console.log(`[getItemTypeID] TypeID Resolved for "${itemName}": "${parseInt(typeID, 10)}", String Response`);
+            return parseInt(typeID, 10);
+
+        } else if (typeof searchRes.data === 'object') {
+            // If the response is an object, it should contain a `typeID`.
+            if (searchRes.data && searchRes.data.typeID) {
+                //  console.log(`[getItemTypeID] TypeID Response (JSON) for "${itemName}": ${JSON.stringify(searchRes.data)}`);
+                typeIDCache.set(itemName, searchRes.data.typeID);
+                // console.log(`[getItemTypeID] TypeID Resolved for "${itemName}": "${searchRes.data.typeID}", JSON Response`);
+                return searchRes.data.typeID;
+            } else {
+                console.error(`[getItemTypeID] TypeID not found for "${itemName}". JSON Response did not contain typeID : ${JSON.stringify(searchRes.data)}`);
+                return null;
+            }
+        } else {
+            // Handle other unexpected response types
+            console.error(`[getItemTypeID] TypeID not found for "${itemName}". Unexpected response data type: ${typeof searchRes.data}, Response: ${JSON.stringify(searchRes.data)}`);
+            return null;
+        }
+
+
+    } catch (error) {
+        console.error('[getItemTypeID] Error fetching TypeID:', error);
+        return null; // Return null in case of any other error
+    }
+}
+// Set up health check route for Cloud Run
+app.get('/', (req, res) => {
+    res.send('Eve Market Bot is running!');
+});
+
+// Set the server to listen on the appropriate port
+const port = process.env.PORT || 8080;
+app.listen(port, () => {
+    console.log(`Server is running on port ${port}`);
+});
