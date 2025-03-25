@@ -271,6 +271,42 @@ client.on('message', (channel, userstate, message, self) => {
             client.say(channel, "I'm sorry, I can only answer questions about combat site escalations and market data.");
         }
     }
+
+    // !info command
+    if (message.toLowerCase().startsWith('!info')) {
+        // Extract the item name or ID from the message
+        const itemIdentifier = message.slice(6).trim();
+        console.log('[client.on(\'message\')] !info command:', message);
+        console.log('[client.on(\'message\')] Item Identifier:', itemIdentifier);
+
+        // Check if the item name or ID is empty
+        if (!itemIdentifier) {
+            client.say(channel, '❌ Please specify an item name or TypeID. ❌');
+            return;
+        }
+
+        // Check if the itemIdentifier is a number (TypeID)
+        if (!isNaN(parseInt(itemIdentifier))) {
+            // It's a number, so treat it as a TypeID
+            const typeID = parseInt(itemIdentifier);
+            const everefURL = `https://everef.net/type/${typeID}`;
+            client.say(channel, `TypeID ${typeID} Info: ${everefURL}`);
+        } else {
+            // It's not a number, so treat it as an item name.  We still need to get the TypeID to use Everef.
+            getItemTypeID(itemIdentifier)
+                .then(typeID => {
+                    if (typeID) {
+                        const everefURL = `https://everef.net/type/${typeID}`;
+                        client.say(channel, `${itemIdentifier} Info: ${everefURL}`);
+                    } else {
+                        client.say(channel, `❌ Could not find TypeID for "${itemIdentifier}". ❌`);
+                    }
+                })
+                .catch(error => {
+                    client.say(channel, `❌ Error finding TypeID for "${itemIdentifier}": ${error.message} ❌`);
+                });
+        }
+    }
 });
 
 
