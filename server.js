@@ -2,7 +2,6 @@ const tmi = require('tmi.js');
 const axios = require('axios');
 const Bottleneck = require('bottleneck');
 const express = require('express');
-const cheerio = require('cheerio'); // For parsing HTML
 
 // Set up Express server for Cloud Run
 const app = express();
@@ -30,12 +29,12 @@ const client = new tmi.Client({
 
 // Connect the Twitch bot to the chat
 client.connect();
-console.log("Twitch client connected.");
+console.log("Twitch client connected."); // Added connection log
 
-// Set a default User Agent if one is not set in the environment variables.
+//Set a default User Agent if one is not set in the environment variables.
 const USER_AGENT = process.env.USER_AGENT || 'TwitchBot/1.0.0 (contact@example.com)';
 
-// Cache for Type IDs and Combat Site Info.  Include the HTML
+// Cache for Type IDs and Combat Site Info
 const typeIDCache = new Map();
 const combatSiteCache = new Map();
 
@@ -44,23 +43,21 @@ const JITA_REGION_ID = 10000002; // The Forge Region ID
 
 // Combat site data (simplified for demonstration)
 const combatSites = {
-    "Angel Forlorn Hub": { url: "https://wiki.eveuniversity.org/Angel_Forlorn_Hub", escalates: false, escalationUrl: null },
-    "Angel Forsaken Hub": { url: "https://wiki.eveuniversity.org/Angel_Forsaken_Hub", escalates: false, escalationUrl: null },
-    "Angel Hideaway": { url: "https://wiki.eveuniversity.org/Angel_Hideaway", escalates: true, escalationUrl: "https://wiki.eveuniversity.org/Angel_Hideaway" }, //example
-    "Blood Raider Forlorn Hub": { url: "https://wiki.eveuniversity.org/Blood_Raider_Forlorn_Hub", escalates: false, escalationUrl: null },
-    "Blood Raider Forsaken Hub": { url: "https://wiki.eveuniversity.org/Blood_Raider_Forsaken_Hub", escalates: false, escalationUrl: null },
-    "Blood Raider Hideaway": { url: "https://wiki.eveuniversity.org/Blood_Raider_Hideaway", escalates: true, escalationUrl: "https://wiki.eveuniversity.org/Blood_Raider_Hideaway" }, //example
-    "Guristas Forlorn Hub": { url: "https://wiki.eveuniversity.org/Guristas_Forlorn_Hub", escalates: false, escalationUrl: null },
-    "Guristas Forsaken Hub": { url: "https://wiki.eveuniversity.org/Guristas_Forsaken_Hub", escalates: false, escalationUrl: null },
-    "Guristas Hideaway": { url: "https://wiki.eveuniversity.org/Guristas_Hideaway", escalates: true, escalationUrl: "https://wiki.eveuniversity.org/Guristas_Hideaway" }, //example
-    "Sansha Forlorn Hub": { url: "https://wiki.eveuniversity.org/Sansha_Forlorn_Hub", escalates: false, escalationUrl: null },
-    "Sansha Forsaken Hub": { url: "https://wiki.eveuniversity.org/Sansha_Forsaken_Hub", escalates: false, escalationUrl: null },
-    "Sansha Hideaway": { url: "https://wiki.eveuniversity.org/Sansha_Hideaway", escalates: true, escalationUrl: "https://wiki.eveuniversity.org/Sansha_Hideaway" }, //example
-    "Serpentis Forlorn Hub": { url: "https://wiki.eveuniversity.org/Serpentis_Forlorn_Hub", escalates: false, escalationUrl: null },
-    "Serpentis Forsaken Hub": { url: "https://wiki.eveuniversity.org/Serpentis_Forsaken_Hub", escalates: false, escalationUrl: null },
-    "Serpentis Hideaway": { url: "https://wiki.eveuniversity.org/Serpentis_Hideaway", escalates: true, escalationUrl: "https://wiki.eveuniversity.org/Serpentis_Hideaway" }, //example
-    "Guristas Den": { url: "https://wiki.eveuniversity.org/Guristas_Den", escalates: true, escalationUrl: "https://wiki.eveuniversity.org/Guristas_Hallucinogen_Supply_Waypoint" }, //added
-    "Guristas Hideout": { url: "https://wiki.eveuniversity.org/Guristas_Hideout", escalates: true, escalationUrl: "https://wiki.eveuniversity.org/Guristas_Hideout" }, //added. same as site.
+    "Angel Forlorn Hub": "https://wiki.eveuniversity.org/Angel_Forlorn_Hub",
+    "Angel Forsaken Hub": "https://wiki.eveuniversity.org/Angel_Forsaken_Hub",
+    "Angel Hideaway": "https://wiki.eveuniversity.org/Angel_Hideaway",
+    "Blood Raider Forlorn Hub": "https://wiki.eveuniversity.org/Blood_Raider_Forlorn_Hub",
+    "Blood Raider Forsaken Hub": "https://wiki.eveuniversity.org/Blood_Raider_Forsaken_Hub",
+    "Blood Raider Hideaway": "https://wiki.eveuniversity.org/Blood_Raider_Hideaway",
+    "Guristas Forlorn Hub": "https://wiki.eveuniversity.org/Guristas_Forlorn_Hub",
+    "Guristas Forsaken Hub": "https://wiki.eveuniversity.org/Guristas_Forsaken_Hub",
+    "Guristas Hideaway": "https://wiki.eveuniversity.org/Guristas_Hideaway",
+    "Sansha Forlorn Hub": "https://wiki.eveuniversity.org/Sansha_Forlorn_Hub",
+    "Sansha Forsaken Hub": "https://wiki.eveuniversity.org/Sansha_Forsaken_Hub",
+    "Sansha Hideaway": "https://wiki.eveuniversity.org/Sansha_Hideaway",
+    "Serpentis Forlorn Hub": "https://wiki.eveuniversity.org/Serpentis_Forlorn_Hub",
+    "Serpentis Forsaken Hub": "https://wiki.eveuniversity.org/Serpentis_Forsaken_Hub",
+    "Serpentis Hideaway": "https://wiki.eveuniversity.org/Serpentis_Hideaway",
 };
 
 // Function to fetch market data for an item
@@ -79,6 +76,8 @@ async function fetchMarketData(itemName, typeID, channel, retryCount = 0) {
 
 async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0) {
     try {
+        // console.log(`[fetchMarketDataFromESI] Start: Fetching market data from ESI for ${itemName} (TypeID: ${typeID}), Retry: ${retryCount}`);
+
         const sellOrdersURL = `https://esi.evetech.net/latest/markets/${JITA_REGION_ID}/orders/?datasource=tranquility&order_type=sell&type_id=${typeID}`;
         const buyOrdersURL = `https://esi.evetech.net/latest/markets/${JITA_REGION_ID}/orders/?datasource=tranquility&order_type=buy&type_id=${typeID}`;
 
@@ -86,13 +85,13 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
             axios.get(sellOrdersURL, {
                 headers: { 'User-Agent': USER_AGENT },
                 validateStatus: function (status) {
-                    return status >= 200 && status < 500;
+                    return status >= 200 && status < 500; // Accept all status codes between 200 and 499 (inclusive)
                 },
             }),
             axios.get(buyOrdersURL, {
                 headers: { 'User-Agent': USER_AGENT },
                 validateStatus: function (status) {
-                    return status >= 200 && status < 500;
+                    return status >= 200 && status < 500; // Accept all status codes between 200 and 499 (inclusive)
                 },
             })
         ]);
@@ -130,14 +129,16 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
 
         const sellPrice = parseFloat(lowestSellOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2 });
         const buyPrice = parseFloat(highestBuyOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2 });
+        //     console.log(`[fetchMarketDataFromESI] Output: Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK, Retry: ${retryCount}`);
         client.say(channel, `Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK`);
+        // console.log(`[fetchMarketDataFromESI] End (Success) - Success getting data from ESI, Retry: ${retryCount}`);
 
     } catch (error) {
         if (axios.isAxiosError(error)) {
             console.log(`[fetchMarketDataFromESI] Catch - Axios Error: ${error.message}, Retry: ${retryCount}`);
             if (error.response) {
                 if (error.response.status === 503) {
-                    const retryDelay = Math.pow(2, retryCount) * 1000;
+                    const retryDelay = Math.pow(2, retryCount) * 1000; // Exponential backoff
                     console.error(`[fetchMarketDataFromESI] ESI Temporarily Unavailable (503) for "${itemName}" (TypeID: ${typeID}). Retrying in ${retryDelay / 1000} seconds...`);
                     if (retryCount < 3) {
                         await new Promise(resolve => setTimeout(resolve, retryDelay));
@@ -167,31 +168,39 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
 }
 
 // Function to handle commands from Twitch chat
-client.on('message', async (channel, userstate, message, self) => {
+client.on('message', (channel, userstate, message, self) => {
     if (self) return;
+    // console.log(`[client.on('message')] Message Received: ${message}`); // Logging message received
 
     // Check if the message starts with the command !market
     if (message.toLowerCase().startsWith('!market')) {
+        // Extract the item name from the message
         let itemName = message.slice(8).trim();
         console.log('[client.on(\'message\')] Original command:', message);
         console.log('[client.on(\'message\')] Item Name:', itemName);
 
+        // Check if the item name is empty
         if (!itemName) {
             client.say(channel, '❌ Please specify an item to search for. ❌');
             console.log('[client.on(\'message\')] Empty Item Name');
             return;
         }
 
+        // Get the type ID using getItemTypeID
         getItemTypeID(itemName)
             .then((typeID) => {
+                // if a type ID is received, fetch market data.
                 if (typeID) {
+                    // console.log(`[client.on('message')] TypeID Found: ${typeID}, Calling fetchMarketData`);
                     fetchMarketData(itemName, typeID, channel);
                 } else {
+                    // if no typeID was found, report this to the user.
                     client.say(channel, `❌ No TypeID found for "${itemName}". ❌`);
                     console.log(`[client.on('message')] No TypeID found`);
                 }
             })
             .catch((error) => {
+                // Report any errors fetching the TypeID to the user
                 client.say(channel, `❌ Error fetching TypeID for "${itemName}": ${error.message} ❌`);
                 console.log(`[client.on('message')] TypeID Error ${error.message}`);
             });
@@ -199,130 +208,24 @@ client.on('message', async (channel, userstate, message, self) => {
 
     // !combat command
     if (message.toLowerCase().startsWith('!combat')) {
-        const itemIdentifier = message.slice(7).trim();
-        console.log('[client.on(\'message\')] !combat command:', message);
+        // Extract the item name or ID from the message
+        const itemIdentifier = message.slice(7).trim(); // Changed from 6 to 7
+        console.log('[client.on(\'message\')] !combat command:', message); // Changed from !info to !combat
         console.log('[client.on(\'message\')] Item Identifier:', itemIdentifier);
 
+        // Check if the item name or ID is empty
         if (!itemIdentifier) {
-            client.say(channel, '❌ Please specify a combat site name. ❌');
+            client.say(channel, '❌ Please specify a combat site name. ❌'); // Changed the message
             return;
         }
 
         // Check if it is a combat site.
         if (combatSites.hasOwnProperty(itemIdentifier)) {
-            const combatSiteData = combatSites[itemIdentifier];
-            const combatSiteURL = combatSiteData.url;
-            const doesEscalate = combatSiteData.escalates;
-            const escalationUrl = combatSiteData.escalationUrl;
-            client.say(channel, `${itemIdentifier} Info: ${combatSiteURL}.  Escalates: ${doesEscalate ? `Yes, check here: ${escalationUrl}` : 'No'}`);
+            const combatSiteURL = combatSites[itemIdentifier];
+            client.say(channel, `${itemIdentifier} Info: ${combatSiteURL}`);
             return;
         } else {
-            client.say(channel, `❌ Combat site "${itemIdentifier}" not found. ❌`);
-        }
-    }
-
-    // !ask command (for basic AI)
-    if (message.toLowerCase().startsWith('!ask')) {
-        const question = message.slice(5).trim().toLowerCase(); // Remove "!ask" and convert to lowercase
-        console.log('[client.on(\'message\')] !ask command:', message);
-        console.log('[client.on(\'message\')] Question:', question);
-
-        if (!question) {
-            client.say(channel, '❌ Please ask a question. ❌');
-            return;
-        }
-
-        // Basic AI logic (keyword matching)
-        if (question.includes("escalate")) {
-            let siteName = "";
-            for (const site in combatSites) {
-                if (question.includes(site.toLowerCase())) {
-                    siteName = site;
-                    break;
-                }
-            }
-            if (siteName) {
-                try {
-                    const siteURL = combatSites[siteName].url;
-                    const response = await axios.get(siteURL, { headers: { 'User-Agent': USER_AGENT } });
-                    const html = response.data;
-                    const $ = cheerio.load(html);
-                    const escalationHeader = $('#Escalation'); //id of the Escalation header
-                    let escalationLink = null;
-                    if (escalationHeader.length) {
-                         escalationLink = siteURL + "#Escalation";
-                    }
-                    const doesEscalate = combatSites[siteName].escalates;
-                    client.say(channel, `${siteName} ${doesEscalate ? `does, check here: ${escalationLink ? escalationLink : siteURL}` : 'does not'} escalate.`);
-
-                } catch (error){
-                     const doesEscalate = combatSites[siteName].escalates;
-                     const siteURL = combatSites[siteName].url;
-                     client.say(channel, `${siteName} ${doesEscalate ? `does, check here: ${siteURL}` : 'does not'} escalate.`);
-                }
-
-            } else {
-                client.say(channel, "I'm sorry, I don't have information on that specific site.");
-            }
-        } else if (question.includes("market")) {
-            const itemName = question.split("market")[1].trim();
-             if (!itemName) {
-                    client.say(channel, '❌ Please specify an item to search for. ❌');
-                    console.log('[client.on(\'message\')] Empty Item Name');
-                    return;
-                }
-            getItemTypeID(itemName)
-            .then((typeID) => {
-                if (typeID) {
-                    fetchMarketData(itemName, typeID, channel);
-                } else {
-                    client.say(channel, `❌ No TypeID found for "${itemName}". ❌`);
-                    console.log(`[client.on('message')] No TypeID found`);
-                }
-            })
-            .catch((error) => {
-                client.say(channel, `❌ Error fetching TypeID for "${itemName}": ${error.message} ❌`);
-                console.log(`[client.on('message')] TypeID Error ${error.message}`);
-            });
-
-        }
-         else {
-            client.say(channel, "I'm sorry, I can only answer questions about combat site escalations and market data.");
-        }
-    }
-
-    // !info command
-    if (message.toLowerCase().startsWith('!info')) {
-        // Extract the item name or ID from the message
-        const itemIdentifier = message.slice(6).trim();
-        console.log('[client.on(\'message\')] !info command:', message);
-        console.log('[client.on(\'message\')] Item Identifier:', itemIdentifier);
-
-        if (!itemIdentifier) {
-            client.say(channel, '❌ Please specify an item name or TypeID. ❌');
-            return;
-        }
-
-        // Check if the itemIdentifier is a number (TypeID)
-        if (!isNaN(parseInt(itemIdentifier))) {
-            // It's a number, so treat it as a TypeID
-            const typeID = parseInt(itemIdentifier);
-            const everefURL = `https://everef.net/type/${typeID}`;
-            client.say(channel, `TypeID ${typeID} Info: ${everefURL}`);
-        } else {
-            // It's not a number, so treat it as an item name.  We still need to get the TypeID to use Everef.
-            getItemTypeID(itemIdentifier)
-                .then(typeID => {
-                    if (typeID) {
-                        const everefURL = `https://everef.net/type/${typeID}`;
-                        client.say(channel, `${itemIdentifier} Info: ${everefURL}`);
-                    } else {
-                        client.say(channel, `❌ Could not find TypeID for "${itemIdentifier}". ❌`);
-                    }
-                })
-                .catch(error => {
-                    client.say(channel, `❌ Error finding TypeID for "${itemIdentifier}": ${error.message} ❌`);
-                });
+            client.say(channel, `❌ Combat site "${itemIdentifier}" not found. ❌`); //tell user if site is not found
         }
     }
 });
@@ -332,40 +235,56 @@ client.on('message', async (channel, userstate, message, self) => {
 async function getItemTypeID(itemName) {
 
     if (typeIDCache.has(itemName)) {
+        //  console.log(`[getItemTypeID] Using cached TypeID for "${itemName}"`)
         return typeIDCache.get(itemName);
     }
 
     try {
+        // Fetch the typeID using the fuzzwork api
         let cleanItemName = itemName.replace(/[^a-zA-Z0-9\s]/g, '');
         const searchRes = await limiter.schedule(() => {
+            //  console.log(`[getItemTypeID] Axios Call to Fuzzwork TypeID: ${itemName}`);
             return axios.get(`http://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(cleanItemName)}`, {
                 headers: { 'User-Agent': USER_AGENT }
             });
         });
 
+
+        // Handle non-200 status codes
         if (searchRes.status !== 200) {
             console.error(`[getItemTypeID] Error fetching TypeID for "${itemName}": HTTP ${searchRes.status}. Response was: ${JSON.stringify(searchRes.data)}`);
             return null;
         }
 
+        // Check if the response is a string or an object.
         if (typeof searchRes.data === 'string') {
-            const typeID = searchRes.data.trim();
+
+            // Fuzzwork API returns the TypeID as the response text (not JSON), so it must be parsed as a string first.
+            const typeID = searchRes.data.trim(); // remove leading and trailing whitespace.
+            //  console.log(`[getItemTypeID] TypeID Response (String) for "${itemName}": "${typeID}"`);
+
+            // Check if TypeID is a valid number and return if so, if not return null
             if (isNaN(parseInt(typeID))) {
                 console.error(`[getItemTypeID] TypeID not found for "${itemName}". Response Data: "${typeID}"`)
                 return null;
             }
             typeIDCache.set(itemName, parseInt(typeID, 10));
+            //  console.log(`[getItemTypeID] TypeID Resolved for "${itemName}": "${parseInt(typeID, 10)}", String Response`);
             return parseInt(typeID, 10);
 
         } else if (typeof searchRes.data === 'object') {
+            // If the response is an object, it should contain a `typeID`.
             if (searchRes.data && searchRes.data.typeID) {
+                //  console.log(`[getItemTypeID] TypeID Response (JSON) for "${itemName}": ${JSON.stringify(searchRes.data)}`);
                 typeIDCache.set(itemName, searchRes.data.typeID);
+                // console.log(`[getItemTypeID] TypeID Resolved for "${itemName}": "${searchRes.data.typeID}", JSON Response`);
                 return searchRes.data.typeID;
             } else {
                 console.error(`[getItemTypeID] TypeID not found for "${itemName}". JSON Response did not contain typeID : ${JSON.stringify(searchRes.data)}`);
                 return null;
             }
         } else {
+            // Handle other unexpected response types
             console.error(`[getItemTypeID] TypeID not found for "${itemName}". Unexpected response data type: ${typeof searchRes.data}, Response: ${JSON.stringify(searchRes.data)}`);
             return null;
         }
@@ -373,7 +292,7 @@ async function getItemTypeID(itemName) {
 
     } catch (error) {
         console.error('[getItemTypeID] Error fetching TypeID:', error);
-        return null;
+        return null; // Return null in case of any other error
     }
 }
 // Set up health check route for Cloud Run
