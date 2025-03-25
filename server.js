@@ -2,6 +2,7 @@ const tmi = require('tmi.js');
 const axios = require('axios');
 const Bottleneck = require('bottleneck');
 const express = require('express');
+const cheerio = require('cheerio'); // For parsing HTML
 
 // Set up Express server for Cloud Run
 const app = express();
@@ -34,7 +35,7 @@ console.log("Twitch client connected.");
 // Set a default User Agent if one is not set in the environment variables.
 const USER_AGENT = process.env.USER_AGENT || 'TwitchBot/1.0.0 (contact@example.com)';
 
-// Cache for Type IDs and Combat Site Info
+// Cache for Type IDs and Combat Site Info.  Include the HTML
 const typeIDCache = new Map();
 const combatSiteCache = new Map();
 
@@ -43,23 +44,23 @@ const JITA_REGION_ID = 10000002; // The Forge Region ID
 
 // Combat site data (simplified for demonstration)
 const combatSites = {
-    "Angel Forlorn Hub": { url: "https://wiki.eveuniversity.org/Angel_Forlorn_Hub", escalates: false },
-    "Angel Forsaken Hub": { url: "https://wiki.eveuniversity.org/Angel_Forsaken_Hub", escalates: false },
-    "Angel Hideaway": { url: "https://wiki.eveuniversity.org/Angel_Hideaway", escalates: true },
-    "Blood Raider Forlorn Hub": { url: "https://wiki.eveuniversity.org/Blood_Raider_Forlorn_Hub", escalates: false },
-    "Blood Raider Forsaken Hub": { url: "https://wiki.eveuniversity.org/Blood_Raider_Forsaken_Hub", escalates: false },
-    "Blood Raider Hideaway": { url: "https://wiki.eveuniversity.org/Blood_Raider_Hideaway", escalates: true },
-    "Guristas Forlorn Hub": { url: "https://wiki.eveuniversity.org/Guristas_Forlorn_Hub", escalates: false },
-    "Guristas Forsaken Hub": { url: "https://wiki.eveuniversity.org/Guristas_Forsaken_Hub", escalates: false },
-    "Guristas Hideaway": { url: "https://wiki.eveuniversity.org/Guristas_Hideaway", escalates: true },
-    "Sansha Forlorn Hub": { url: "https://wiki.eveuniversity.org/Sansha_Forlorn_Hub", escalates: false },
-    "Sansha Forsaken Hub": { url: "https://wiki.eveuniversity.org/Sansha_Forsaken_Hub", escalates: false },
-    "Sansha Hideaway": { url: "https://wiki.eveuniversity.org/Sansha_Hideaway", escalates: true },
-    "Serpentis Forlorn Hub": { url: "https://wiki.eveuniversity.org/Serpentis_Forlorn_Hub", escalates: false },
-    "Serpentis Forsaken Hub": { url: "https://wiki.eveuniversity.org/Serpentis_Forsaken_Hub", escalates: false },
-    "Serpentis Hideaway": { url: "https://wiki.eveuniversity.org/Serpentis_Hideaway", escalates: true },
-    "Guristas Den": { url: "https://wiki.eveuniversity.org/Guristas_Den", escalates: true }, //added
-    "Guristas Hideout": { url: "https://wiki.eveuniversity.org/Guristas_Hideout", escalates: true }, //added
+    "Angel Forlorn Hub": { url: "https://wiki.eveuniversity.org/Angel_Forlorn_Hub", escalates: false, escalationUrl: null },
+    "Angel Forsaken Hub": { url: "https://wiki.eveuniversity.org/Angel_Forsaken_Hub", escalates: false, escalationUrl: null },
+    "Angel Hideaway": { url: "https://wiki.eveuniversity.org/Angel_Hideaway", escalates: true, escalationUrl: "https://wiki.eveuniversity.org/Angel_Hideaway" }, //example
+    "Blood Raider Forlorn Hub": { url: "https://wiki.eveuniversity.org/Blood_Raider_Forlorn_Hub", escalates: false, escalationUrl: null },
+    "Blood Raider Forsaken Hub": { url: "https://wiki.eveuniversity.org/Blood_Raider_Forsaken_Hub", escalates: false, escalationUrl: null },
+    "Blood Raider Hideaway": { url: "https://wiki.eveuniversity.org/Blood_Raider_Hideaway", escalates: true, escalationUrl: "https://wiki.eveuniversity.org/Blood_Raider_Hideaway" }, //example
+    "Guristas Forlorn Hub": { url: "https://wiki.eveuniversity.org/Guristas_Forlorn_Hub", escalates: false, escalationUrl: null },
+    "Guristas Forsaken Hub": { url: "https://wiki.eveuniversity.org/Guristas_Forsaken_Hub", escalates: false, escalationUrl: null },
+    "Guristas Hideaway": { url: "https://wiki.eveuniversity.org/Guristas_Hideaway", escalates: true, escalationUrl: "https://wiki.eveuniversity.org/Guristas_Hideaway" }, //example
+    "Sansha Forlorn Hub": { url: "https://wiki.eveuniversity.org/Sansha_Forlorn_Hub", escalates: false, escalationUrl: null },
+    "Sansha Forsaken Hub": { url: "https://wiki.eveuniversity.org/Sansha_Forsaken_Hub", escalates: false, escalationUrl: null },
+    "Sansha Hideaway": { url: "https://wiki.eveuniversity.org/Sansha_Hideaway", escalates: true, escalationUrl: "https://wiki.eveuniversity.org/Sansha_Hideaway" }, //example
+    "Serpentis Forlorn Hub": { url: "https://wiki.eveuniversity.org/Serpentis_Forlorn_Hub", escalates: false, escalationUrl: null },
+    "Serpentis Forsaken Hub": { url: "https://wiki.eveuniversity.org/Serpentis_Forsaken_Hub", escalates: false, escalationUrl: null },
+    "Serpentis Hideaway": { url: "https://wiki.eveuniversity.org/Serpentis_Hideaway", escalates: true, escalationUrl: "https://wiki.eveuniversity.org/Serpentis_Hideaway" }, //example
+    "Guristas Den": { url: "https://wiki.eveuniversity.org/Guristas_Den", escalates: true, escalationUrl: "https://wiki.eveuniversity.org/Guristas_Hallucinogen_Supply_Waypoint" }, //added
+    "Guristas Hideout": { url: "https://wiki.eveuniversity.org/Guristas_Hideout", escalates: true, escalationUrl: "https://wiki.eveuniversity.org/Guristas_Hideout" }, //added. same as site.
 };
 
 // Function to fetch market data for an item
@@ -166,7 +167,7 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
 }
 
 // Function to handle commands from Twitch chat
-client.on('message', (channel, userstate, message, self) => {
+client.on('message', async (channel, userstate, message, self) => {
     if (self) return;
 
     // Check if the message starts with the command !market
@@ -212,7 +213,8 @@ client.on('message', (channel, userstate, message, self) => {
             const combatSiteData = combatSites[itemIdentifier];
             const combatSiteURL = combatSiteData.url;
             const doesEscalate = combatSiteData.escalates;
-            client.say(channel, `${itemIdentifier} Info: ${combatSiteURL}.  Escalates: ${doesEscalate ? `Yes, check here: ${combatSiteURL}` : 'No'}`);
+            const escalationUrl = combatSiteData.escalationUrl;
+            client.say(channel, `${itemIdentifier} Info: ${combatSiteURL}.  Escalates: ${doesEscalate ? `Yes, check here: ${escalationUrl}` : 'No'}`);
             return;
         } else {
             client.say(channel, `❌ Combat site "${itemIdentifier}" not found. ❌`);
@@ -240,9 +242,25 @@ client.on('message', (channel, userstate, message, self) => {
                 }
             }
             if (siteName) {
-                const doesEscalate = combatSites[siteName].escalates;
-                const siteURL = combatSites[siteName].url;
-                client.say(channel, `${siteName} ${doesEscalate ? `does, check here: ${siteURL}` : 'does not'} escalate.`);
+                try {
+                    const siteURL = combatSites[siteName].url;
+                    const response = await axios.get(siteURL, { headers: { 'User-Agent': USER_AGENT } });
+                    const html = response.data;
+                    const $ = cheerio.load(html);
+                    const escalationHeader = $('#Escalation'); //id of the Escalation header
+                    let escalationLink = null;
+                    if (escalationHeader.length) {
+                         escalationLink = siteURL + "#Escalation";
+                    }
+                    const doesEscalate = combatSites[siteName].escalates;
+                    client.say(channel, `${siteName} ${doesEscalate ? `does, check here: ${escalationLink ? escalationLink : siteURL}` : 'does not'} escalate.`);
+
+                } catch (error){
+                     const doesEscalate = combatSites[siteName].escalates;
+                     const siteURL = combatSites[siteName].url;
+                     client.say(channel, `${siteName} ${doesEscalate ? `does, check here: ${siteURL}` : 'does not'} escalate.`);
+                }
+
             } else {
                 client.say(channel, "I'm sorry, I don't have information on that specific site.");
             }
