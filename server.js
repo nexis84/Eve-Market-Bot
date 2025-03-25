@@ -212,7 +212,7 @@ client.on('message', (channel, userstate, message, self) => {
             const combatSiteData = combatSites[itemIdentifier];
             const combatSiteURL = combatSiteData.url;
             const doesEscalate = combatSiteData.escalates;
-            client.say(channel, `${itemIdentifier} Info: ${combatSiteURL}.  Escalates: ${doesEscalate ? 'Yes' : 'No'}`);
+            client.say(channel, `${itemIdentifier} Info: ${combatSiteURL}.  Escalates: ${doesEscalate ? `Yes, check here: ${combatSiteURL}` : 'No'}`);
             return;
         } else {
             client.say(channel, `❌ Combat site "${itemIdentifier}" not found. ❌`);
@@ -241,7 +241,8 @@ client.on('message', (channel, userstate, message, self) => {
             }
             if (siteName) {
                 const doesEscalate = combatSites[siteName].escalates;
-                client.say(channel, `${siteName} ${doesEscalate ? 'does' : 'does not'} escalate.`);
+                const siteURL = combatSites[siteName].url;
+                client.say(channel, `${siteName} ${doesEscalate ? `does, check here: ${siteURL}` : 'does not'} escalate.`);
             } else {
                 client.say(channel, "I'm sorry, I don't have information on that specific site.");
             }
@@ -279,7 +280,6 @@ client.on('message', (channel, userstate, message, self) => {
         console.log('[client.on(\'message\')] !info command:', message);
         console.log('[client.on(\'message\')] Item Identifier:', itemIdentifier);
 
-        // Check if the item name or ID is empty
         if (!itemIdentifier) {
             client.say(channel, '❌ Please specify an item name or TypeID. ❌');
             return;
