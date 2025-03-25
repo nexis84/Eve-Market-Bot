@@ -7,21 +7,15 @@ const cheerio = require('cheerio'); // For parsing HTML
 // Set up Express server for Cloud Run
 const app = express();
 
-// Use the PORT environment variable, which Cloud Run sets.
-const port = process.env.PORT || 8080;
-
 // Set up rate limiter with Bottleneck
 const limiter = new Bottleneck({
     minTime: 500, // 500ms between requests (2 request per second), Fuzzwork recommended min is 1000ms
-    maxConcurrent: 1 // Only one request at a time.
+    maxConcurrent: 1 // Only one request at a time
 });
 
 // Ensure OAuth Token is properly set
 if (!process.env.TWITCH_OAUTH_TOKEN) {
     console.error("Missing TWITCH_OAUTH_TOKEN. Check your environment variables.");
-    // In a Cloud Run environment, you might want to handle this more gracefully
-    // than just exiting.  Consider logging to Cloud Logging and/or sending a
-    // message to a monitoring system.  For this example, we'll keep the exit.
     process.exit(1);
 }
 
@@ -91,30 +85,29 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
         const [sellOrdersRes, buyOrdersRes] = await Promise.all([
             axios.get(sellOrdersURL, {
                 headers: { 'User-Agent': USER_AGENT },
-                //  validateStatus: function (status) {  //  Remove this, we handle in the catch.
-                //      return status >= 200 && status < 500;
-                //  },
+                validateStatus: function (status) {
+                    return status >= 200 && status < 500;
+                },
             }),
             axios.get(buyOrdersURL, {
                 headers: { 'User-Agent': USER_AGENT },
-                // validateStatus: function (status) { // Remove this, we handle in the catch
-                //     return status >= 200 && status < 500;
-                // },
+                validateStatus: function (status) {
+                    return status >= 200 && status < 500;
+                },
             })
         ]);
 
-        // Handle HTTP errors more explicitly.
+
         if (sellOrdersRes.status !== 200) {
             console.error(`[fetchMarketDataFromESI] Error fetching sell orders. HTTP Status: ${sellOrdersRes.status}, Response: ${JSON.stringify(sellOrdersRes.data)}`);
             client.say(channel, `❌ Error fetching sell orders for "${itemName}": HTTP ${sellOrdersRes.status}. ❌`);
-            return; // IMPORTANT: Return after error to prevent further processing
+            return;
         }
         if (buyOrdersRes.status !== 200) {
             console.error(`[fetchMarketDataFromESI] Error fetching buy orders. HTTP Status: ${buyOrdersRes.status}, Response: ${JSON.stringify(buyOrdersRes.data)}`);
             client.say(channel, `❌ Error fetching buy orders for "${itemName}": HTTP ${buyOrdersRes.status}. ❌`);
-            return; // IMPORTANT: Return after error
+            return;
         }
-
         const sellOrders = sellOrdersRes.data;
         const buyOrders = buyOrdersRes.data;
 
@@ -257,15 +250,15 @@ client.on('message', async (channel, userstate, message, self) => {
                     const escalationHeader = $('#Escalation'); //id of the Escalation header
                     let escalationLink = null;
                     if (escalationHeader.length) {
-                        escalationLink = siteURL + "#Escalation";
+                         escalationLink = siteURL + "#Escalation";
                     }
                     const doesEscalate = combatSites[siteName].escalates;
                     client.say(channel, `${siteName} ${doesEscalate ? `does, check here: ${escalationLink ? escalationLink : siteURL}` : 'does not'} escalate.`);
 
-                } catch (error) {
-                    const doesEscalate = combatSites[siteName].escalates;
-                    const siteURL = combatSites[siteName].url;
-                    client.say(channel, `${siteName} ${doesEscalate ? `does, check here: ${siteURL}` : 'does not'} escalate.`);
+                } catch (error){
+                     const doesEscalate = combatSites[siteName].escalates;
+                     const siteURL = combatSites[siteName].url;
+                     client.say(channel, `${siteName} ${doesEscalate ? `does, check here: ${siteURL}` : 'does not'} escalate.`);
                 }
 
             } else {
@@ -273,27 +266,27 @@ client.on('message', async (channel, userstate, message, self) => {
             }
         } else if (question.includes("market")) {
             const itemName = question.split("market")[1].trim();
-            if (!itemName) {
-                client.say(channel, '❌ Please specify an item to search for. ❌');
-                console.log('[client.on(\'message\')] Empty Item Name');
-                return;
-            }
+             if (!itemName) {
+                    client.say(channel, '❌ Please specify an item to search for. ❌');
+                    console.log('[client.on(\'message\')] Empty Item Name');
+                    return;
+                }
             getItemTypeID(itemName)
-                .then((typeID) => {
-                    if (typeID) {
-                        fetchMarketData(itemName, typeID, channel);
-                    } else {
-                        client.say(channel, `❌ No TypeID found for "${itemName}". ❌`);
-                        console.log(`[client.on('message')] No TypeID found`);
-                    }
-                })
-                .catch((error) => {
-                    client.say(channel, `❌ Error fetching TypeID for "${itemName}": ${error.message} ❌`);
-                    console.log(`[client.on('message')] TypeID Error ${error.message}`);
-                });
+            .then((typeID) => {
+                if (typeID) {
+                    fetchMarketData(itemName, typeID, channel);
+                } else {
+                    client.say(channel, `❌ No TypeID found for "${itemName}". ❌`);
+                    console.log(`[client.on('message')] No TypeID found`);
+                }
+            })
+            .catch((error) => {
+                client.say(channel, `❌ Error fetching TypeID for "${itemName}": ${error.message} ❌`);
+                console.log(`[client.on('message')] TypeID Error ${error.message}`);
+            });
 
         }
-        else {
+         else {
             client.say(channel, "I'm sorry, I can only answer questions about combat site escalations and market data.");
         }
     }
@@ -388,7 +381,8 @@ app.get('/', (req, res) => {
     res.send('Eve Market Bot is running!');
 });
 
-// Start the server and listen on the port that Cloud Run provides.
+// Set the server to listen on the appropriate port
+const port = process.env.PORT || 8080;
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
 });
