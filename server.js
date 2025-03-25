@@ -10,7 +10,7 @@ const app = express();
 // Set up rate limiter with Bottleneck
 const limiter = new Bottleneck({
     minTime: 500, // 500ms between requests (2 request per second), Fuzzwork recommended min is 1000ms
-    maxConcurrent: 1 // Only one request at a time
+    maxConcurrent: 1 // Only one request at a time.
 });
 
 // Ensure OAuth Token is properly set
