@@ -129,7 +129,7 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
 
         const sellPrice = parseFloat(lowestSellOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2 });
         const buyPrice = parseFloat(highestBuyOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2 });
-        //     console.log(`[fetchMarketDataFromESI] Output: Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK, Retry: ${retryCount}`);
+        //        console.log(`[fetchMarketDataFromESI] Output: Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK, Retry: ${retryCount}`);
         client.say(channel, `Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK`);
         // console.log(`[fetchMarketDataFromESI] End (Success) - Success getting data from ESI, Retry: ${retryCount}`);
 
@@ -228,6 +228,30 @@ client.on('message', (channel, userstate, message, self) => {
             client.say(channel, `❌ Combat site "${itemIdentifier}" not found. ❌`); //tell user if site is not found
         }
     }
+    // !info command
+    if (message.toLowerCase().startsWith('!info')) {
+        const itemName = message.slice(6).trim(); // Remove "!info " and get the item name
+        console.log('[client.on(\'message\')] !info command:', message);
+        console.log('[client.on(\'message\')] Item Name:', itemName);
+
+        if (!itemName) {
+            client.say(channel, '❌ Please specify an item to search for. ❌');
+            return;
+        }
+
+        getItemTypeID(itemName)
+            .then((typeID) => {
+                if (typeID) {
+                    const everefURL = `https://everef.net/?type=${typeID}`;
+                    client.say(channel, `${itemName} info: ${everefURL}`);
+                } else {
+                    client.say(channel, `❌ No TypeID found for "${itemName}". ❌`);
+                }
+            })
+            .catch((error) => {
+                client.say(channel, `❌ Error fetching TypeID for "${itemName}": ${error.message} ❌`);
+            });
+    }
 });
 
 
@@ -243,7 +267,7 @@ async function getItemTypeID(itemName) {
         // Fetch the typeID using the fuzzwork api
         let cleanItemName = itemName.replace(/[^a-zA-Z0-9\s]/g, '');
         const searchRes = await limiter.schedule(() => {
-            //  console.log(`[getItemTypeID] Axios Call to Fuzzwork TypeID: ${itemName}`);
+            // console.log(`[getItemTypeID] Axios Call to Fuzzwork TypeID: ${itemName}`);
             return axios.get(`http://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(cleanItemName)}`, {
                 headers: { 'User-Agent': USER_AGENT }
             });
@@ -261,7 +285,7 @@ async function getItemTypeID(itemName) {
 
             // Fuzzwork API returns the TypeID as the response text (not JSON), so it must be parsed as a string first.
             const typeID = searchRes.data.trim(); // remove leading and trailing whitespace.
-            //  console.log(`[getItemTypeID] TypeID Response (String) for "${itemName}": "${typeID}"`);
+            // console.log(`[getItemTypeID] TypeID Response (String) for "${itemName}": "${typeID}"`);
 
             // Check if TypeID is a valid number and return if so, if not return null
             if (isNaN(parseInt(typeID))) {
@@ -275,7 +299,7 @@ async function getItemTypeID(itemName) {
         } else if (typeof searchRes.data === 'object') {
             // If the response is an object, it should contain a `typeID`.
             if (searchRes.data && searchRes.data.typeID) {
-                //  console.log(`[getItemTypeID] TypeID Response (JSON) for "${itemName}": ${JSON.stringify(searchRes.data)}`);
+                // console.log(`[getItemTypeID] TypeID Response (JSON) for "${itemName}": ${JSON.stringify(searchRes.data)}`);
                 typeIDCache.set(itemName, searchRes.data.typeID);
                 // console.log(`[getItemTypeID] TypeID Resolved for "${itemName}": "${searchRes.data.typeID}", JSON Response`);
                 return searchRes.data.typeID;
