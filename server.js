@@ -56,7 +56,7 @@ const combatSites = {
     "serpentis hidden hideaway": { url: "https://wiki.eveuniversity.org/Serpentis_Hidden_Hideaway", difficulty: "None", foundIn: "Serpentis Corporation", tier: "High" },
     "angel forsaken hideaway": { url: "https://wiki.eveuniversity.org/Angel_Forsaken_Hideaway", difficulty: "3/10", foundIn: "Angel Cartel", tier: "High" },
     "blood forsaken hideaway": { url: "https://wiki.eveuniversity.org/Blood_Forsaken_Hideaway", difficulty: "None", foundIn: "Blood Raiders", tier: "High" },
-    "guristas forsaken hideaway": { url: "https://wiki.eveuniversity.org/Guristas_Forsaken_Hideaway", difficulty: "None", foundIn: "Guristas Pirates", tier: "High" },
+    "guristas forsaken hideaway": { url: "https://wiki.eveuniversity.org/Guristas_Forsaken_Hideaway", difficulty: "7/10", foundIn: "Guristas Pirates", tier: "High" },
     "sansha forsaken hideaway": { url: "https://wiki.eveuniversity.org/Sansha_Forsaken_Hideaway", difficulty: "None", foundIn: "Sansha's Nation", tier: "High" },
     "serpentis forsaken hideaway": { url: "https://wiki.eveuniversity.org/Serpentis_Forsaken_Hideaway", difficulty: "None", foundIn: "Serpentis Corporation", tier: "High" },
     "angel forlorn hideaway": { url: "https://wiki.eveuniversity.org/Angel_Forlorn_Hideaway", difficulty: "None", foundIn: "Angel Cartel", tier: "High" },
@@ -156,7 +156,7 @@ const combatSites = {
     "guristas haven": { url: "https://wiki.eveuniversity.org/Guristas_Haven", difficulty: "10/10", foundIn: "Guristas Pirates", tier: "Mid" },
     "sansha haven": { url: "https://wiki.eveuniversity.org/Sansha_Haven", difficulty: "10/10", foundIn: "Sansha's Nation", tier: "Mid" },
     "serpentis haven": { url: "https://wiki.eveuniversity.org/Serpentis_Haven", difficulty: "10/10", foundIn: "Serpentis Corporation", tier: "Mid" },
-    "drone patrol": { url: "https://wiki.eveuniversity.org/Drone_Patrol", difficulty: "10/10", foundIn: "Rogue Drones",tier: "Mid" },
+    "drone patrol": { url: "https://wiki.eveuniversity.org/Drone_Patrol", difficulty: "10/10", foundIn: "Rogue Drones", tier: "Mid" },
     "angel sanctum": { url: "https://wiki.eveuniversity.org/Angel_Sanctum", difficulty: "N/A", foundIn: "Angel Cartel", tier: "High" },
     "blood sanctum": { url: "https://wiki.eveuniversity.org/Blood_Sanctum", difficulty: "10/10", foundIn: "Blood Raiders", tier: "High" },
     "guristas sanctum": { url: "https://wiki.eveuniversity.org/Guristas_Sanctum", difficulty: "10/10", foundIn: "Guristas Pirates", tier: "High" },
@@ -352,7 +352,7 @@ client.on('message', (channel, userstate, message, self) => {
         getItemTypeID(itemName)
             .then((typeID) => {
                 if (typeID) {
-                    const eveRefUrl = `https://everef.net/?type=${typeID}`;
+                    const eveRefUrl = `https://everef.net/type/${typeID}`; // Removed the question mark
                     client.say(channel, `${itemName} info: ${eveRefUrl}`);
                 } else {
                     client.say(channel, `❌ No TypeID found for "${itemName}". ❌`);
@@ -398,45 +398,63 @@ async function getItemTypeID(itemName) {
             const typeID = searchRes.data.trim(); // remove leading and trailing whitespace.
             //  console.log(`[getItemTypeID] TypeID Response (String) for "${itemName}": "${typeID}"`);
 
-            // Check if TypeID is a valid number and return if so, if not return null
-            if (isNaN(parseInt(typeID))) {
-                console.error(`[getItemTypeID] TypeID not found for "${itemName}". Response Data: "${typeID}"`)
+            // Check if TypeID is a valid number and return if so,
+            if (!isNaN(typeID) && Number(typeID) > 0) {
+                typeIDCache.set(lowerCaseItemName, Number(typeID));
+                return Number(typeID);
+            }
+            else {
+                console.error(`[getItemTypeID] Invalid TypeID (Not a Number) for "${itemName}": "${typeID}"`);
                 return null;
             }
-            typeIDCache.set(lowerCaseItemName, parseInt(typeID, 10)); //use lower case
-            //  console.log(`[getItemTypeID] TypeID Resolved for "${itemName}": "${parseInt(typeID, 10)}", String Response`);
-            return parseInt(typeID, 10);
-
-        } else if (typeof searchRes.data === 'object') {
-            // If the response is an object, it should contain a `typeID`.
-            if (searchRes.data && searchRes.data.typeID) {
-                //  console.log(`[getItemTypeID] TypeID Response (JSON) for "${itemName}": ${JSON.stringify(searchRes.data)}`);
-                typeIDCache.set(lowerCaseItemName, searchRes.data.typeID); //use lower case
-                // console.log(`[getItemTypeID] TypeID Resolved for "${itemName}": "${searchRes.data.typeID}", JSON Response`);
-                return searchRes.data.typeID;
-            } else {
-                console.error(`[getItemTypeID] TypeID not found for "${itemName}". JSON Response did not contain typeID : ${JSON.stringify(searchRes.data)}`);
+        }
+        else if (typeof searchRes.data === 'object' && searchRes.data !== null) {
+            // The Fuzzwork API can return an object (if the item name is ambiguous)
+            if (searchRes.data.typeID && Array.isArray(searchRes.data.typeID)) {
+                const typeIDDataArray = searchRes.data.typeID;
+                if (typeIDDataArray.length > 0) {
+                    const firstTypeIDData = typeIDDataArray[0];  // Use the first result.
+                    const typeID = firstTypeIDData.typeID;
+                    //  console.log(`[getItemTypeID] TypeID Response (Object) for "${itemName}": ${typeID}`);
+                    typeIDCache.set(lowerCaseItemName, typeID);
+                    return typeID;
+                }
+            }
+            else if (searchRes.data.typeID) {
+                const typeID = searchRes.data.typeID;
+                // console.log(`[getItemTypeID] TypeID Response (Object) for "${itemName}": ${typeID}`);
+                typeIDCache.set(lowerCaseItemName, typeID);
+                return typeID;
+            }
+            else {
+                console.error(`[getItemTypeID] Unexpected object structure, no typeID found for "${itemName}".  Response was: ${JSON.stringify(searchRes.data)}`);
                 return null;
             }
-        } else {
-            // Handle other unexpected response types
-            console.error(`[getItemTypeID] TypeID not found for "${itemName}". Unexpected response data type: ${typeof searchRes.data}, Response: ${JSON.stringify(searchRes.data)}`);
+        }
+        else {
+            console.error(`[getItemTypeID] Unexpected response type for "${itemName}".  Response was: ${JSON.stringify(searchRes.data)}`);
             return null;
         }
-
-
-    } catch (error) {
-        console.error('[getItemTypeID] Error fetching TypeID:', error);
-        return null; // Return null in case of any other error
+    }
+    catch (error) {
+        if (axios.isAxiosError(error)) {
+            console.error(`[getItemTypeID] Axios error fetching TypeID for "${itemName}": ${error.message},  Response: ${JSON.stringify(error.response?.data)}`);
+            return null; // Return null on error
+        } else {
+            console.error(`[getItemTypeID] Error fetching TypeID for "${itemName}": ${error.message}`);
+            return null; // Return null on error
+        }
     }
 }
-// Set up health check route for Cloud Run
-app.get('/', (req, res) => {
-    res.send('Eve Market Bot is running!');
-});
 
-// Set the server to listen on the appropriate port
-const port = process.env.PORT || 8080;
+
+// Start the Express server
+const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
+});
+
+// Respond to root URL
+app.get('/', (req, res) => {
+    res.send('Eve Twitch Market Bot is running.');
 });
