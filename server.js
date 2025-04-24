@@ -1,5 +1,3 @@
---- START OF FILE market.js ---
-
 const tmi = require('tmi.js');
 const axios = require('axios');
 const Bottleneck = require('bottleneck');
@@ -611,5 +609,3 @@ process.on('SIGTERM', () => {
         process.exit(1);
     }, 10000); // 10 seconds timeout
 });
-
---- END OF FILE market.js ---
