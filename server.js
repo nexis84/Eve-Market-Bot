@@ -1,3 +1,5 @@
+--- START OF FILE market.js ---
+
 const tmi = require('tmi.js');
 const axios = require('axios');
 const Bottleneck = require('bottleneck');
@@ -24,7 +26,7 @@ if (!process.env.TWITCH_OAUTH_TOKEN) {
 const client = new tmi.Client({
     options: { debug: false }, // Set to true for verbose tmi.js logging if needed
     identity: {
-        username: 'Eve_twitch_market_bot',
+        username: 'Eve_twitch_market_bot', // Replace if needed
         password: process.env.TWITCH_OAUTH_TOKEN
     },
     channels: ['ne_x_is', 'contempoenterprises'] // Add/remove channels as needed
@@ -42,7 +44,7 @@ client.connect()
     });
 
 // Set a default User Agent if one is not set in the environment variables. IMPORTANT for ESI.
-const USER_AGENT = process.env.USER_AGENT || 'EveTwitchMarketBot/1.1.0 (Maintainer: YourContactInfo@example.com)'; // PLEASE update contact info
+const USER_AGENT = process.env.USER_AGENT || 'EveTwitchMarketBot/1.2.0 (Maintainer: YourContactInfo@example.com)'; // PLEASE update contact info
 console.log(`Using User-Agent: ${USER_AGENT}`);
 
 // Cache for Type IDs
@@ -51,8 +53,11 @@ const typeIDCache = new Map();
 const CACHE_EXPIRY_MS = 60 * 60 * 1000;
 
 // EVE Online Constants
-const JITA_SYSTEM_ID = 30000142; // Jita system ID
+// const JITA_SYSTEM_ID = 30000142; // System ID (Less relevant for market orders)
 const JITA_REGION_ID = 10000002; // The Forge Region ID
+const JITA_44_STATION_ID = 60003760; // Jita IV - Moon 4 - Caldari Navy Assembly Plant (Correct ID for location filtering)
+const PLEX_TYPE_ID = 44992; // Type ID for PLEX
+
 const ESI_BASE_URL = 'https://esi.evetech.net/latest';
 const DATASOURCE = 'tranquility';
 
@@ -385,16 +390,26 @@ async function searchFuzzworkForItem(lowerCaseItemName, originalItemName) {
 
 /**
  * Fetches market data (lowest sell, highest buy) for a given TypeID from ESI.
+ * Handles the special case for PLEX.
  * @param {string} itemName Original item name (for logging/messaging).
  * @param {number} typeID The TypeID of the item.
  * @param {string} channel The Twitch channel to send the message to.
  * @param {number} [retryCount=0] Internal retry counter for 503 errors.
  */
 async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0) {
+    // *** ADDED CHECK FOR PLEX ***
+    if (typeID === PLEX_TYPE_ID) {
+        console.log(`[fetchMarketDataFromESI] Detected PLEX (TypeID: ${typeID}). PLEX is not traded on the standard regional market.`);
+        safeSay(channel, `PLEX prices are handled via the secure NES/PLEX Vault, not the Jita market. Check in-game for current rates.`);
+        return; // Stop processing for PLEX
+    }
+    // *** END OF PLEX CHECK ***
+
+
     const marketOrdersURL = `${ESI_BASE_URL}/markets/${JITA_REGION_ID}/orders/`;
     const params = {
         datasource: DATASOURCE,
-        order_type: 'all', // Fetch both buy and sell in one go if possible (check ESI docs if this is optimal)
+        order_type: 'all', // Fetch both buy and sell
         type_id: typeID
     };
 
@@ -430,12 +445,12 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
         }
 
         const allOrders = marketRes.data;
-        const sellOrders = allOrders.filter(order => !order.is_buy_order && order.location_id === JITA_SYSTEM_ID); // Filter for Jita 4-4 sell orders
-        const buyOrders = allOrders.filter(order => order.is_buy_order && order.location_id === JITA_SYSTEM_ID);   // Filter for Jita 4-4 buy orders
 
-        // It's possible to have orders in region but not specifically in Jita 4-4
-        const jitaSellOrders = sellOrders.filter(order => order.location_id === JITA_SYSTEM_ID);
-        const jitaBuyOrders = buyOrders.filter(order => order.location_id === JITA_SYSTEM_ID);
+        // *** CORRECTED FILTERING: Use JITA_44_STATION_ID for location_id ***
+        // Filter for Jita 4-4 sell orders specifically
+        const jitaSellOrders = allOrders.filter(order => !order.is_buy_order && order.location_id === JITA_44_STATION_ID);
+        // Filter for Jita 4-4 buy orders specifically
+        const jitaBuyOrders = allOrders.filter(order => order.is_buy_order && order.location_id === JITA_44_STATION_ID);
 
 
         let lowestSellPrice = Infinity;
@@ -443,7 +458,6 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
             lowestSellPrice = jitaSellOrders.reduce((min, order) => (order.price < min ? order.price : min), Infinity);
         } else {
              console.log(`[fetchMarketDataFromESI] No SELL orders found specifically in Jita 4-4 for "${itemName}" (TypeID: ${typeID})`);
-             // Optional: could check sellOrders for *any* sell order in the region if needed
         }
 
         let highestBuyPrice = 0;
@@ -451,9 +465,7 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
             highestBuyPrice = jitaBuyOrders.reduce((max, order) => (order.price > max ? order.price : max), 0);
          } else {
              console.log(`[fetchMarketDataFromESI] No BUY orders found specifically in Jita 4-4 for "${itemName}" (TypeID: ${typeID})`);
-              // Optional: could check buyOrders for *any* buy order in the region if needed
          }
-
 
         const sellStr = lowestSellPrice !== Infinity ? formatISK(lowestSellPrice) : 'N/A';
         const buyStr = highestBuyPrice !== 0 ? formatISK(highestBuyPrice) : 'N/A';
@@ -495,7 +507,7 @@ client.on('message', async (channel, userstate, message, self) => {
             const typeID = await getItemTypeID(itemName);
 
             if (typeID) {
-                // No need for separate fetchMarketData wrapper, call ESI directly
+                // Directly call the updated ESI fetcher
                 await fetchMarketDataFromESI(itemName, typeID, channel);
             } else {
                 safeSay(channel, `❌ Could not find an item matching "${itemName}". Check spelling or try a more specific name.`);
@@ -579,14 +591,25 @@ app.listen(port, () => {
 // Graceful shutdown handling
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received: closing Twitch client and HTTP server');
+  const serverInstance = app.listen(); // Need to capture the server instance if not already done
   client.disconnect()
     .then(() => {
         console.log('Twitch client disconnected.');
-        // Close server if needed (app.close() requires storing the server instance)
-        process.exit(0);
+        serverInstance.close(() => { // Close the HTTP server gracefully
+            console.log('HTTP server closed.');
+            process.exit(0);
+        });
     })
     .catch(err => {
-        console.error('Error during Twitch disconnect:', err);
-        process.exit(1);
+        console.error('Error during shutdown:', err);
+        process.exit(1); // Exit with error code if shutdown fails
     });
+
+    // Force close after a timeout if graceful shutdown fails
+    setTimeout(() => {
+        console.error('Could not close connections in time, forcing shutdown');
+        process.exit(1);
+    }, 10000); // 10 seconds timeout
 });
+
+--- END OF FILE market.js ---
