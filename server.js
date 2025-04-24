@@ -1,3 +1,5 @@
+--- START OF FILE market.js ---
+
 const tmi = require('tmi.js');
 const axios = require('axios');
 const Bottleneck = require('bottleneck');
@@ -7,41 +9,56 @@ const express = require('express');
 const app = express();
 
 // Set up rate limiter with Bottleneck
+// ESI allows more requests, but Fuzzwork recommends 1/sec. Let's keep it conservative.
+// A single limiter for both simplifies things, but ensure total requests stay within limits.
 const limiter = new Bottleneck({
-    minTime: 500, // 500ms between requests (2 request per second), Fuzzwork recommended min is 1000ms
+    minTime: 600, // ~1.6 requests per second max overall for external APIs
     maxConcurrent: 1 // Only one request at a time
 });
 
 // Ensure OAuth Token is properly set
 if (!process.env.TWITCH_OAUTH_TOKEN) {
-    console.error("Missing TWITCH_OAUTH_TOKEN. Check your environment variables.");
+    console.error("FATAL: Missing TWITCH_OAUTH_TOKEN. Check your environment variables.");
     process.exit(1);
 }
 
 // Twitch Bot Configuration
 const client = new tmi.Client({
+    options: { debug: false }, // Set to true for verbose tmi.js logging if needed
     identity: {
         username: 'Eve_twitch_market_bot',
         password: process.env.TWITCH_OAUTH_TOKEN
     },
-    channels: ['ne_x_is', 'contempoenterprises']
+    channels: ['ne_x_is', 'contempoenterprises'] // Add/remove channels as needed
 });
 
 // Connect the Twitch bot to the chat
-client.connect();
-console.log("Twitch client connected."); // Added connection log
+client.connect()
+    .then(([server, port]) => {
+        console.log(`Twitch client connected to ${server}:${port}.`);
+        console.log(`Listening in channels: ${client.opts.channels.join(', ')}`);
+    })
+    .catch((err) => {
+        console.error("FATAL: Failed to connect to Twitch:", err);
+        process.exit(1); // Exit if connection fails
+    });
 
-//Set a default User Agent if one is not set in the environment variables.
-const USER_AGENT = process.env.USER_AGENT || 'TwitchBot/1.0.0 (contact@example.com)';
+// Set a default User Agent if one is not set in the environment variables. IMPORTANT for ESI.
+const USER_AGENT = process.env.USER_AGENT || 'EveTwitchMarketBot/1.1.0 (Maintainer: YourContactInfo@example.com)'; // PLEASE update contact info
+console.log(`Using User-Agent: ${USER_AGENT}`);
 
-// Cache for Type IDs and Combat Site Info
+// Cache for Type IDs
 const typeIDCache = new Map();
-const combatSiteCache = new Map();
+// Cache expiry time (e.g., 1 hour)
+const CACHE_EXPIRY_MS = 60 * 60 * 1000;
 
+// EVE Online Constants
 const JITA_SYSTEM_ID = 30000142; // Jita system ID
 const JITA_REGION_ID = 10000002; // The Forge Region ID
+const ESI_BASE_URL = 'https://esi.evetech.net/latest';
+const DATASOURCE = 'tranquility';
 
-// Combat site data (simplified for demonstration)
+// Combat site data (simplified for demonstration) - Keep this up-to-date if needed
 const combatSites = {
     "angel hideaway": { url: "https://wiki.eveuniversity.org/Angel_Hideaway", difficulty: "4/10", foundIn: "Angel Cartel", tier: "Low" },
     "blood hideaway": { url: "https://wiki.eveuniversity.org/Blood_Raider_Hideaway", difficulty: "None", foundIn: "Blood Raiders", tier: "Low" },
@@ -171,290 +188,409 @@ const combatSites = {
     "teeming drone horde": { url: "https://wiki.eveuniversity.org/Teeming_Drone_Horde", difficulty: "?", foundIn: "Rogue Drones", tier: "High" },
 };
 
-// Function to fetch market data for an item
-async function fetchMarketData(itemName, typeID, channel, retryCount = 0) {
+
+// --- Helper Functions ---
+
+// Function to safely say message in chat, handling potential rate limiting/errors
+async function safeSay(channel, message) {
     try {
-        console.log(`[fetchMarketData] Start: Fetching market data for ${itemName} (TypeID: ${typeID}), Retry: ${retryCount}`);
-        return fetchMarketDataFromESI(itemName, typeID, channel, retryCount);
-
-
-    } catch (error) {
-        console.error(`[fetchMarketData] General Error: ${error.message}, Retry: ${retryCount}`);
-        client.say(channel, `❌ Error fetching data for "${itemName}": ${error.message} ❌`);
+        await client.say(channel, message);
+    } catch (err) {
+        console.error(`[safeSay] Error sending message to ${channel}: ${err}`);
+        // Optional: Implement retry logic or specific error handling if needed
     }
 }
 
+// Format ISK price
+function formatISK(price) {
+    if (typeof price !== 'number' || isNaN(price)) {
+        return 'N/A';
+    }
+    return price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 
-async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0) {
+
+// --- Core Logic Functions ---
+
+/**
+ * Gets the TypeID of an item based on its name.
+ * Prioritizes ESI search (strict then fuzzy), falls back to Fuzzwork.
+ * Caches successful lookups.
+ * @param {string} itemName The name of the item to search for.
+ * @returns {Promise<number|null>} The TypeID if found, otherwise null.
+ */
+async function getItemTypeID(itemName) {
+    const lowerCaseItemName = itemName.toLowerCase().trim();
+    if (!lowerCaseItemName) return null; // Don't search empty strings
+
+    // 1. Check Cache
+    const cachedEntry = typeIDCache.get(lowerCaseItemName);
+    if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_EXPIRY_MS)) {
+        console.log(`[getItemTypeID] Cache HIT for "${itemName}" -> ${cachedEntry.typeID}`);
+        return cachedEntry.typeID;
+    }
+
+    console.log(`[getItemTypeID] Cache MISS for "${itemName}". Searching ESI...`);
+
+    // 2. Try ESI Search (Strict first, then Fuzzy)
+    let esiTypeID = await searchESIForItem(lowerCaseItemName);
+
+    if (esiTypeID) {
+        console.log(`[getItemTypeID] ESI Found TypeID for "${itemName}": ${esiTypeID}`);
+        typeIDCache.set(lowerCaseItemName, { typeID: esiTypeID, timestamp: Date.now() });
+        return esiTypeID;
+    }
+
+    console.log(`[getItemTypeID] ESI search failed for "${itemName}". Falling back to Fuzzwork...`);
+
+    // 3. Fallback to Fuzzwork
+    let fuzzworkTypeID = await searchFuzzworkForItem(lowerCaseItemName, itemName); // Pass original name for logging clarity
+
+    if (fuzzworkTypeID) {
+        console.log(`[getItemTypeID] Fuzzwork Found TypeID for "${itemName}": ${fuzzworkTypeID}`);
+        typeIDCache.set(lowerCaseItemName, { typeID: fuzzworkTypeID, timestamp: Date.now() });
+        return fuzzworkTypeID;
+    }
+
+    console.error(`[getItemTypeID] Failed to find TypeID for "${itemName}" using both ESI and Fuzzwork.`);
+    return null;
+}
+
+/**
+ * Searches ESI for an item's Type ID.
+ * @param {string} lowerCaseItemName Lowercase, trimmed item name.
+ * @returns {Promise<number|null>} TypeID or null.
+ */
+async function searchESIForItem(lowerCaseItemName) {
+    const searchUrl = `${ESI_BASE_URL}/search/`;
+    const params = {
+        categories: 'inventory_type',
+        datasource: DATASOURCE,
+        language: 'en-us',
+        search: lowerCaseItemName,
+        strict: true // Start with strict search
+    };
+
     try {
-        // console.log(`[fetchMarketDataFromESI] Start: Fetching market data from ESI for ${itemName} (TypeID: ${typeID}), Retry: ${retryCount}`);
+        // Attempt Strict Search
+        let esiRes = await limiter.schedule(() => axios.get(searchUrl, {
+            params,
+            headers: { 'User-Agent': USER_AGENT },
+            validateStatus: (status) => status === 200 || status === 404 // Allow 404 (not found)
+        }));
 
-        const sellOrdersURL = `https://esi.evetech.net/latest/markets/${JITA_REGION_ID}/orders/?datasource=tranquility&order_type=sell&type_id=${typeID}`;
-        const buyOrdersURL = `https://esi.evetech.net/latest/markets/${JITA_REGION_ID}/orders/?datasource=tranquility&order_type=buy&type_id=${typeID}`;
-
-        const [sellOrdersRes, buyOrdersRes] = await Promise.all([
-            axios.get(sellOrdersURL, {
-                headers: { 'User-Agent': USER_AGENT },
-                validateStatus: function (status) {
-                    return status >= 200 && status < 500; // Accept all status codes between 200 and 499 (inclusive)
-                },
-            }),
-            axios.get(buyOrdersURL, {
-                headers: { 'User-Agent': USER_AGENT },
-                validateStatus: function (status) {
-                    return status >= 200 && status < 500; // Accept all status codes between 200 and 499 (inclusive)
-                },
-            })
-        ]);
-
-
-        if (sellOrdersRes.status !== 200) {
-            console.error(`[fetchMarketDataFromESI] Error fetching sell orders. HTTP Status: ${sellOrdersRes.status}, Response: ${JSON.stringify(sellOrdersRes.data)}`);
-            client.say(channel, `❌ Error fetching sell orders for "${itemName}": HTTP ${sellOrdersRes.status}. ❌`);
-            return;
-        }
-        if (buyOrdersRes.status !== 200) {
-            console.error(`[fetchMarketDataFromESI] Error fetching buy orders. HTTP Status: ${buyOrdersRes.status}, Response: ${JSON.stringify(buyOrdersRes.data)}`);
-            client.say(channel, `❌ Error fetching buy orders for "${itemName}": HTTP ${buyOrdersRes.status}. ❌`);
-            return;
-        }
-        const sellOrders = sellOrdersRes.data;
-        const buyOrders = buyOrdersRes.data;
-
-        if (!sellOrders || sellOrders.length === 0) {
-            console.error(`[fetchMarketDataFromESI] No sell orders found for "${itemName}" (TypeID: ${typeID}) in Jita`);
-            client.say(channel, `❌ No sell orders for "${itemName}" in Jita. ❌`);
-            return;
+        if (esiRes.status === 200 && esiRes.data.inventory_type && esiRes.data.inventory_type.length === 1) {
+            console.log(`[searchESIForItem] ESI Strict search SUCCESS for "${lowerCaseItemName}"`);
+            return esiRes.data.inventory_type[0];
         }
 
-        if (!buyOrders || buyOrders.length === 0) {
-            console.error(`[fetchMarketDataFromESI] No buy orders found for "${itemName}" (TypeID: ${typeID}) in Jita`);
-            client.say(channel, `❌ No buy orders for "${itemName}" in Jita. ❌`);
-            return;
+        // If Strict search failed or gave multiple results (unlikely but possible), try Fuzzy
+        console.log(`[searchESIForItem] ESI Strict search failed or ambiguous for "${lowerCaseItemName}". Trying fuzzy search...`);
+        params.strict = false;
+        esiRes = await limiter.schedule(() => axios.get(searchUrl, {
+            params,
+            headers: { 'User-Agent': USER_AGENT },
+            validateStatus: (status) => status === 200 || status === 404
+        }));
+
+        if (esiRes.status === 200 && esiRes.data.inventory_type && esiRes.data.inventory_type.length > 0) {
+            // Fuzzy search might return multiple items. We'll take the first one.
+            // This is a common approach, but be aware it might not always be the *intended* item if the query was ambiguous.
+            console.log(`[searchESIForItem] ESI Fuzzy search SUCCESS for "${lowerCaseItemName}" (found ${esiRes.data.inventory_type.length} results, using first).`);
+            return esiRes.data.inventory_type[0];
         }
 
-        // Find the lowest sell price
-        const lowestSellOrder = sellOrders.reduce((min, order) => (order.price < min.price ? order : min), sellOrders[0]);
-        // Find the highest buy price
-        const highestBuyOrder = buyOrders.reduce((max, order) => (order.price > max.price ? order : max), buyOrders[0]);
-
-        const sellPrice = parseFloat(lowestSellOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2 });
-        const buyPrice = parseFloat(highestBuyOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2 });
-        //    console.log(`[fetchMarketDataFromESI] Output: Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK, Retry: ${retryCount}`);
-        client.say(channel, `Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK`);
-        // console.log(`[fetchMarketDataFromESI] End (Success) - Success getting data from ESI, Retry: ${retryCount}`);
+        console.log(`[searchESIForItem] ESI Fuzzy search FAILED for "${lowerCaseItemName}" (Status: ${esiRes.status})`);
+        return null;
 
     } catch (error) {
         if (axios.isAxiosError(error)) {
-            console.log(`[fetchMarketDataFromESI] Catch - Axios Error: ${error.message}, Retry: ${retryCount}`);
-            if (error.response) {
-                if (error.response.status === 503) {
-                    const retryDelay = Math.pow(2, retryCount) * 1000; // Exponential backoff
-                    console.error(`[fetchMarketDataFromESI] ESI Temporarily Unavailable (503) for "${itemName}" (TypeID: ${typeID}). Retrying in ${retryDelay / 1000} seconds...`);
-                    if (retryCount < 3) {
-                        await new Promise(resolve => setTimeout(resolve, retryDelay));
-                        return fetchMarketDataFromESI(itemName, typeID, channel, retryCount + 1);
-                    } else {
-                        console.error(`[fetchMarketDataFromESI] ESI Unavailable (503) for "${itemName}" (TypeID: ${typeID}) after multiple retries.`);
-                        client.say(channel, `❌ ESI Temporarily Unavailable for "${itemName}". ❌`);
-                        return;
-                    }
-                    return;
-                } else {
-                    console.error(`[fetchMarketDataFromESI] Error fetching market data for "${itemName}" (TypeID: ${typeID}). HTTP Status: ${error.response.status}, Response: ${JSON.stringify(error.response.data)}`);
-                    client.say(channel, `❌ Error fetching market data for "${itemName}": HTTP ${error.response.status}. ❌`);
-                    return;
-                }
-            } else {
-                console.error(`[fetchMarketDataFromESI] Error fetching market data for "${itemName}" (TypeID: ${typeID}):`, error.message);
-                client.say(channel, `❌ Error fetching data for "${itemName}": ${error.message} ❌`);
-                return;
-            }
+            console.error(`[searchESIForItem] Axios error during ESI search for "${lowerCaseItemName}": ${error.message}`, error.response?.data ? `Data: ${JSON.stringify(error.response.data)}` : '');
         } else {
-            console.error(`[fetchMarketDataFromESI] Error fetching market data for "${itemName}":`, error);
-            client.say(channel, `❌ Error fetching data for "${itemName}": ${error.message} ❌`);
+            console.error(`[searchESIForItem] Generic error during ESI search for "${lowerCaseItemName}": ${error.message}`);
         }
-
+        return null;
     }
 }
 
-// Function to handle commands from Twitch chat
-client.on('message', (channel, userstate, message, self) => {
-    if (self) return;
-    // console.log(`[client.on('message')] Message Received: ${message}`); // Logging message received
+/**
+ * Searches Fuzzwork API for an item's Type ID.
+ * @param {string} lowerCaseItemName Lowercase, trimmed item name (used for URL encoding).
+ * @param {string} originalItemName Original item name (for logging).
+ * @returns {Promise<number|null>} TypeID or null.
+ */
+async function searchFuzzworkForItem(lowerCaseItemName, originalItemName) {
+    // Fuzzwork might be less sensitive to special chars, but basic clean is good.
+    let cleanItemName = lowerCaseItemName.replace(/[^a-z0-9\s'-]/g, ''); // Allow letters, numbers, space, hyphen, apostrophe
 
-    // Check if the message starts with the command !market
-    if (message.toLowerCase().startsWith('!market')) {
-        // Extract the item name from the message
-        let itemName = message.slice(8).trim();
-        console.log('[client.on(\'message\')] Original command:', message);
-        console.log('[client.on(\'message\')] Item Name:', itemName);
+    if (!cleanItemName) return null;
 
-        // Check if the item name is empty
-        if (!itemName) {
-            client.say(channel, '❌ Please specify an item to search for. ❌');
-            console.log('[client.on(\'message\')] Empty Item Name');
-            return;
+    const fuzzUrl = `https://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(cleanItemName)}`;
+
+    try {
+        const fuzzRes = await limiter.schedule(() => axios.get(fuzzUrl, {
+            headers: { 'User-Agent': USER_AGENT },
+            // Fuzzwork can return non-JSON plain text or JSON error/ambiguity object
+            transformResponse: [(data) => data], // Keep response as string initially
+            validateStatus: (status) => status >= 200 && status < 500 // Accept 2xx, 4xx
+        }));
+
+        if (fuzzRes.status !== 200) {
+            console.error(`[searchFuzzworkForItem] Fuzzwork Error for "${originalItemName}" (Cleaned: "${cleanItemName}"): HTTP ${fuzzRes.status}. Response: ${fuzzRes.data}`);
+            return null;
         }
 
-        // Get the type ID using getItemTypeID
-        getItemTypeID(itemName)
-            .then((typeID) => {
-                // if a type ID is received, fetch market data.
-                if (typeID) {
-                    // console.log(`[client.on('message')] TypeID Found: ${typeID}, Calling fetchMarketData`);
-                    fetchMarketData(itemName, typeID, channel);
-                } else {
-                    // if no typeID was found, report this to the user.
-                    client.say(channel, `❌ No TypeID found for "${itemName}". ❌`);
-                    console.log(`[client.on('message')] No TypeID found`);
+        // Fuzzwork sometimes returns plain text TypeID
+        if (typeof fuzzRes.data === 'string') {
+            const potentialID = parseInt(fuzzRes.data.trim(), 10);
+            if (!isNaN(potentialID) && potentialID > 0) {
+                 console.log(`[searchFuzzworkForItem] Fuzzwork SUCCESS (string response) for "${originalItemName}": ${potentialID}`);
+                 return potentialID;
+            }
+        }
+
+        // Fuzzwork sometimes returns JSON (often for errors or ambiguity)
+        try {
+            const jsonData = JSON.parse(fuzzRes.data);
+            // Check if it returned a single typeID object like { typeName: "...", typeID: 123 }
+             if (jsonData && typeof jsonData === 'object' && jsonData.typeID && !isNaN(parseInt(jsonData.typeID, 10))) {
+                 const typeID = parseInt(jsonData.typeID, 10);
+                 console.log(`[searchFuzzworkForItem] Fuzzwork SUCCESS (JSON object response) for "${originalItemName}": ${typeID}`);
+                 return typeID;
+             }
+            // Check if it returned an array for ambiguous results: { typeID: [ { typeName: "...", typeID: 1 }, { typeName: "...", typeID: 2 } ] }
+             if (jsonData && typeof jsonData === 'object' && Array.isArray(jsonData.typeID) && jsonData.typeID.length > 0) {
+                const firstResultID = parseInt(jsonData.typeID[0]?.typeID, 10);
+                if (!isNaN(firstResultID) && firstResultID > 0) {
+                    console.log(`[searchFuzzworkForItem] Fuzzwork AMBIGUOUS result for "${originalItemName}", using first result: ${firstResultID}`);
+                    return firstResultID; // Take the first ambiguous result
                 }
-            })
-            .catch((error) => {
-                // Report any errors fetching the TypeID to the user
-                client.say(channel, `❌ Error fetching TypeID for "${itemName}": ${error.message} ❌`);
-                console.log(`[client.on('message')] TypeID Error ${error.message}`);
-            });
-    }
-
-    // !combat command
-    if (message.toLowerCase().startsWith('!combat')) {
-        // Extract the item name or ID from the message
-        const itemIdentifier = message.slice(7).trim().toLowerCase(); // Changed from 6 to 7 and toLowerCase()
-        console.log('[client.on(\'message\')] !combat command:', message); // Changed from !info to !combat
-        console.log('[client.on(\'message\')] Item Identifier:', itemIdentifier);
-
-        // Check if the item name or ID is empty
-        if (!itemIdentifier) {
-            client.say(channel, '❌ Please specify a combat site name. ❌'); // Changed the message
-            return;
+             }
+        } catch (parseError) {
+            // Ignore parse error if the string check above didn't find an ID - it means the string wasn't a simple ID
+            console.warn(`[searchFuzzworkForItem] Fuzzwork response for "${originalItemName}" was not a simple TypeID string and failed JSON parsing: ${parseError.message}. Response: ${fuzzRes.data}`);
         }
 
-        // Check if it is a combat site.
-        if (combatSites.hasOwnProperty(itemIdentifier)) {
-            const siteData = combatSites[itemIdentifier];
-            client.say(channel, `${itemIdentifier} Info: ${siteData.url}, Difficulty: ${siteData.difficulty}, Found In: ${siteData.foundIn}, Tier: ${siteData.tier}`);
-            return;
+        console.error(`[searchFuzzworkForItem] Fuzzwork FAILED for "${originalItemName}". Unexpected response format or no valid ID found. Response: ${fuzzRes.data}`);
+        return null;
+
+    } catch (error) {
+        if (axios.isAxiosError(error)) {
+            console.error(`[searchFuzzworkForItem] Axios error during Fuzzwork search for "${originalItemName}": ${error.message}`, error.response?.data ? `Data: ${JSON.stringify(error.response.data)}` : '');
         } else {
-            client.say(channel, `❌ Combat site "${itemIdentifier}" not found. ❌`); //tell user if site is not found
+            console.error(`[searchFuzzworkForItem] Generic error during Fuzzwork search for "${originalItemName}": ${error.message}`);
         }
+        return null;
     }
-    // !info command
-    if (message.toLowerCase().startsWith('!info')) {
-        const itemName = message.slice(6).trim(); // Remove '!info ' and get the item name
-        console.log(`[client.on('message')] !info command, Item Name: ${itemName}`);
+}
 
-        if (!itemName) {
-            client.say(channel, '❌ Please specify an item to search for. ❌');
+
+/**
+ * Fetches market data (lowest sell, highest buy) for a given TypeID from ESI.
+ * @param {string} itemName Original item name (for logging/messaging).
+ * @param {number} typeID The TypeID of the item.
+ * @param {string} channel The Twitch channel to send the message to.
+ * @param {number} [retryCount=0] Internal retry counter for 503 errors.
+ */
+async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0) {
+    const marketOrdersURL = `${ESI_BASE_URL}/markets/${JITA_REGION_ID}/orders/`;
+    const params = {
+        datasource: DATASOURCE,
+        order_type: 'all', // Fetch both buy and sell in one go if possible (check ESI docs if this is optimal)
+        type_id: typeID
+    };
+
+    console.log(`[fetchMarketDataFromESI] Fetching Jita market orders for "${itemName}" (TypeID: ${typeID})`);
+
+    try {
+        // Use limiter for the ESI market call as well
+        const marketRes = await limiter.schedule(() => axios.get(marketOrdersURL, {
+            params,
+            headers: { 'User-Agent': USER_AGENT },
+            validateStatus: (status) => status >= 200 && status < 504 // Accept 2xx and client errors, retry 503 later
+        }));
+
+        // Handle ESI 503 Service Unavailable with backoff
+        if (marketRes.status === 503) {
+             const retryDelay = Math.pow(2, retryCount) * 1000 + Math.random() * 500; // Exponential backoff + jitter
+             console.error(`[fetchMarketDataFromESI] ESI Temporarily Unavailable (503) for "${itemName}" (TypeID: ${typeID}). Retrying in ${Math.round(retryDelay / 1000)}s... (Attempt ${retryCount + 1})`);
+             if (retryCount < 3) {
+                 await new Promise(resolve => setTimeout(resolve, retryDelay));
+                 return fetchMarketDataFromESI(itemName, typeID, channel, retryCount + 1); // Recursive retry call
+             } else {
+                 console.error(`[fetchMarketDataFromESI] ESI Unavailable (503) for "${itemName}" (TypeID: ${typeID}) after multiple retries.`);
+                 safeSay(channel, `❌ ESI market data is temporarily unavailable for "${itemName}". Please try again later.`);
+                 return;
+             }
+        }
+
+        // Handle other non-success status codes
+        if (marketRes.status !== 200) {
+            console.error(`[fetchMarketDataFromESI] Error fetching market orders for "${itemName}" (TypeID: ${typeID}). HTTP Status: ${marketRes.status}. Response: ${JSON.stringify(marketRes.data)}`);
+            safeSay(channel, `❌ Error fetching market orders for "${itemName}": ESI returned HTTP ${marketRes.status}.`);
             return;
         }
 
-        getItemTypeID(itemName)
-            .then((typeID) => {
-                if (typeID) {
-                    const eveRefUrl = `https://everef.net/type/${typeID}`; // Removed the question mark
-                    client.say(channel, `${itemName} info: ${eveRefUrl}`);
-                } else {
-                    client.say(channel, `❌ No TypeID found for "${itemName}". ❌`);
-                }
-            })
-            .catch((error) => {
-                client.say(channel, `❌ Error fetching TypeID for "${itemName}": ${error.message} ❌`);
-                console.error(`[client.on('message')] Error fetching TypeID:`, error);
-            });
+        const allOrders = marketRes.data;
+        const sellOrders = allOrders.filter(order => !order.is_buy_order && order.location_id === JITA_SYSTEM_ID); // Filter for Jita 4-4 sell orders
+        const buyOrders = allOrders.filter(order => order.is_buy_order && order.location_id === JITA_SYSTEM_ID);   // Filter for Jita 4-4 buy orders
+
+        // It's possible to have orders in region but not specifically in Jita 4-4
+        const jitaSellOrders = sellOrders.filter(order => order.location_id === JITA_SYSTEM_ID);
+        const jitaBuyOrders = buyOrders.filter(order => order.location_id === JITA_SYSTEM_ID);
+
+
+        let lowestSellPrice = Infinity;
+        if (jitaSellOrders.length > 0) {
+            lowestSellPrice = jitaSellOrders.reduce((min, order) => (order.price < min ? order.price : min), Infinity);
+        } else {
+             console.log(`[fetchMarketDataFromESI] No SELL orders found specifically in Jita 4-4 for "${itemName}" (TypeID: ${typeID})`);
+             // Optional: could check sellOrders for *any* sell order in the region if needed
+        }
+
+        let highestBuyPrice = 0;
+         if (jitaBuyOrders.length > 0) {
+            highestBuyPrice = jitaBuyOrders.reduce((max, order) => (order.price > max ? order.price : max), 0);
+         } else {
+             console.log(`[fetchMarketDataFromESI] No BUY orders found specifically in Jita 4-4 for "${itemName}" (TypeID: ${typeID})`);
+              // Optional: could check buyOrders for *any* buy order in the region if needed
+         }
+
+
+        const sellStr = lowestSellPrice !== Infinity ? formatISK(lowestSellPrice) : 'N/A';
+        const buyStr = highestBuyPrice !== 0 ? formatISK(highestBuyPrice) : 'N/A';
+
+        console.log(`[fetchMarketDataFromESI] Result for "${itemName}": Sell: ${sellStr}, Buy: ${buyStr}`);
+        safeSay(channel, `"${itemName}" (Jita 4-4): Sell: ${sellStr} ISK, Buy: ${buyStr} ISK`);
+
+    } catch (error) {
+         // Catch errors not handled by validateStatus (e.g., network errors, timeouts)
+         if (axios.isAxiosError(error)) {
+            console.error(`[fetchMarketDataFromESI] Axios error fetching market data for "${itemName}" (TypeID: ${typeID}): ${error.message}`, error.response?.data ? `Data: ${JSON.stringify(error.response.data)}` : '');
+        } else {
+            console.error(`[fetchMarketDataFromESI] Generic error fetching market data for "${itemName}" (TypeID: ${typeID}):`, error);
+        }
+        safeSay(channel, `❌ An error occurred while fetching market data for "${itemName}".`);
+    }
+}
+
+// --- Twitch Event Listener ---
+
+client.on('message', async (channel, userstate, message, self) => {
+    if (self) return; // Ignore messages from the bot itself
+
+    const messageLower = message.toLowerCase().trim();
+    const commandArgs = message.trim().split(/\s+/); // Split message by spaces
+    const command = commandArgs[0]?.toLowerCase(); // First word is the command
+
+    // --- !market command ---
+    if (command === '!market') {
+        const itemName = commandArgs.slice(1).join(' '); // Join the rest back together
+        console.log(`[Twitch] Received !market command in ${channel} for: "${itemName}"`);
+
+        if (!itemName) {
+            safeSay(channel, 'Usage: !market <item name>');
+            return;
+        }
+
+        try {
+            const typeID = await getItemTypeID(itemName);
+
+            if (typeID) {
+                // No need for separate fetchMarketData wrapper, call ESI directly
+                await fetchMarketDataFromESI(itemName, typeID, channel);
+            } else {
+                safeSay(channel, `❌ Could not find an item matching "${itemName}". Check spelling or try a more specific name.`);
+            }
+        } catch (error) {
+            // Catch errors from getItemTypeID itself if any slip through
+            console.error(`[Twitch] Error processing !market command for "${itemName}": ${error}`);
+            safeSay(channel, `❌ An unexpected error occurred while searching for "${itemName}".`);
+        }
+    }
+
+    // --- !combat command ---
+    else if (command === '!combat') {
+        const siteName = commandArgs.slice(1).join(' ').toLowerCase(); // Join the rest, lowercase
+        console.log(`[Twitch] Received !combat command in ${channel} for: "${siteName}"`);
+
+        if (!siteName) {
+            safeSay(channel, 'Usage: !combat <combat site name>');
+            return;
+        }
+
+        const siteData = combatSites[siteName]; // Direct lookup in our static data
+
+        if (siteData) {
+            safeSay(channel, `"${siteName}" Info: ${siteData.url} | Difficulty: ${siteData.difficulty} | Faction: ${siteData.foundIn} | Tier: ${siteData.tier}`);
+        } else {
+            // Suggest possible matches (simple substring check)
+            const possibleMatches = Object.keys(combatSites).filter(key => key.includes(siteName)).slice(0, 3); // Limit suggestions
+            let response = `❌ Combat site "${siteName}" not found.`;
+            if (possibleMatches.length > 0) {
+                response += ` Did you mean: ${possibleMatches.join(', ')}?`;
+            }
+            safeSay(channel, response);
+        }
+    }
+
+    // --- !info command ---
+    else if (command === '!info') {
+         const itemName = commandArgs.slice(1).join(' ');
+         console.log(`[Twitch] Received !info command in ${channel} for: "${itemName}"`);
+
+         if (!itemName) {
+            safeSay(channel, 'Usage: !info <item name>');
+            return;
+         }
+
+         try {
+             const typeID = await getItemTypeID(itemName);
+
+             if (typeID) {
+                 const eveRefUrl = `https://everef.net/type/${typeID}`;
+                 // Future idea: Could also link to EVE University wiki if available?
+                 safeSay(channel, `"${itemName}" Info [TypeID: ${typeID}]: ${eveRefUrl}`);
+             } else {
+                 safeSay(channel, `❌ Could not find an item matching "${itemName}" for info lookup.`);
+             }
+         } catch (error) {
+             console.error(`[Twitch] Error processing !info command for "${itemName}": ${error}`);
+             safeSay(channel, `❌ An unexpected error occurred while looking up info for "${itemName}".`);
+         }
     }
 });
 
+// --- Basic Health Check for Cloud Run/Express ---
+app.get('/', (req, res) => {
+    // Check if TMI client thinks it's connected
+    const twitchConnected = client.readyState() === "OPEN";
+    const status = twitchConnected ? 200 : 503; // OK or Service Unavailable
+    const message = twitchConnected ? 'Eve Twitch Market Bot is running and connected to Twitch.' : 'Eve Twitch Market Bot is running BUT disconnected from Twitch.';
 
-// Function to get the TypeID of an item based on its name
-async function getItemTypeID(itemName) {
-    const lowerCaseItemName = itemName.toLowerCase(); //convert to lower case
-    if (typeIDCache.has(lowerCaseItemName)) {
-        //  console.log(`[getItemTypeID] Using cached TypeID for "${itemName}"`)
-        return typeIDCache.get(lowerCaseItemName);
-    }
-
-    try {
-        // Fetch the typeID using the fuzzwork api
-        let cleanItemName = itemName.replace(/[^a-zA-Z0-9\s]/g, '');
-        const searchRes = await limiter.schedule(() => {
-            //  console.log(`[getItemTypeID] Axios Call to Fuzzwork TypeID: ${itemName}`);
-            return axios.get(`http://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(cleanItemName)}`, {
-                headers: { 'User-Agent': USER_AGENT }
-            });
-        });
-
-
-        // Handle non-200 status codes
-        if (searchRes.status !== 200) {
-            console.error(`[getItemTypeID] Error fetching TypeID for "${itemName}": HTTP ${searchRes.status}. Response was: ${JSON.stringify(searchRes.data)}`);
-            return null;
-        }
-
-        // Check if the response is a string or an object.
-        if (typeof searchRes.data === 'string') {
-
-            // Fuzzwork API returns the TypeID as the response text (not JSON), so it must be parsed as a string first.
-            const typeID = searchRes.data.trim(); // remove leading and trailing whitespace.
-            //  console.log(`[getItemTypeID] TypeID Response (String) for "${itemName}": "${typeID}"`);
-
-            // Check if TypeID is a valid number and return if so,
-            if (!isNaN(typeID) && Number(typeID) > 0) {
-                typeIDCache.set(lowerCaseItemName, Number(typeID));
-                return Number(typeID);
-            }
-            else {
-                console.error(`[getItemTypeID] Invalid TypeID (Not a Number) for "${itemName}": "${typeID}"`);
-                return null;
-            }
-        }
-        else if (typeof searchRes.data === 'object' && searchRes.data !== null) {
-            // The Fuzzwork API can return an object (if the item name is ambiguous)
-            if (searchRes.data.typeID && Array.isArray(searchRes.data.typeID)) {
-                const typeIDDataArray = searchRes.data.typeID;
-                if (typeIDDataArray.length > 0) {
-                    const firstTypeIDData = typeIDDataArray[0];  // Use the first result.
-                    const typeID = firstTypeIDData.typeID;
-                    //  console.log(`[getItemTypeID] TypeID Response (Object) for "${itemName}": ${typeID}`);
-                    typeIDCache.set(lowerCaseItemName, typeID);
-                    return typeID;
-                }
-            }
-            else if (searchRes.data.typeID) {
-                const typeID = searchRes.data.typeID;
-                // console.log(`[getItemTypeID] TypeID Response (Object) for "${itemName}": ${typeID}`);
-                typeIDCache.set(lowerCaseItemName, typeID);
-                return typeID;
-            }
-            else {
-                console.error(`[getItemTypeID] Unexpected object structure, no typeID found for "${itemName}".  Response was: ${JSON.stringify(searchRes.data)}`);
-                return null;
-            }
-        }
-        else {
-            console.error(`[getItemTypeID] Unexpected response type for "${itemName}".  Response was: ${JSON.stringify(searchRes.data)}`);
-            return null;
-        }
-    }
-    catch (error) {
-        if (axios.isAxiosError(error)) {
-            console.error(`[getItemTypeID] Axios error fetching TypeID for "${itemName}": ${error.message},  Response: ${JSON.stringify(error.response?.data)}`);
-            return null; // Return null on error
-        } else {
-            console.error(`[getItemTypeID] Error fetching TypeID for "${itemName}": ${error.message}`);
-            return null; // Return null on error
-        }
-    }
-}
-
+    console.log(`[Health Check] Status: ${status}, Twitch Connected: ${twitchConnected}`);
+    res.status(status).send(message);
+});
 
 // Start the Express server
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 8080; // Cloud Run expects 8080 by default
 app.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
+    console.log(`Server listening on port ${port}`);
 });
 
-// Respond to root URL
-app.get('/', (req, res) => {
-    res.send('Eve Twitch Market Bot is running.');
+// Graceful shutdown handling
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing Twitch client and HTTP server');
+  client.disconnect()
+    .then(() => {
+        console.log('Twitch client disconnected.');
+        // Close server if needed (app.close() requires storing the server instance)
+        process.exit(0);
+    })
+    .catch(err => {
+        console.error('Error during Twitch disconnect:', err);
+        process.exit(1);
+    });
 });
+
+--- END OF FILE market.js ---
