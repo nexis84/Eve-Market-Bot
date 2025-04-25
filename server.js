@@ -26,7 +26,7 @@ if (!process.env.TWITCH_OAUTH_TOKEN) {
 
 // Twitch Bot Configuration
 const client = new tmi.Client({
-    // options: { debug: true }, // <-- Keep this commented/uncommented as needed for debugging
+    options: { debug: true }, // <-- *** ENABLED TMI.JS DEBUG LOGGING ***
     identity: {
         username: 'Eve_twitch_market_bot',
         password: process.env.TWITCH_OAUTH_TOKEN // Ensure this includes 'chat:read' and 'chat:edit' scopes
@@ -173,6 +173,7 @@ const combatSites = {
     "serpentis forsaken sanctum": { url: "https://wiki.eveuniversity.org/Serpentis_Forsaken_Sanctum", difficulty: "10/10", foundIn: "Serpentis Corporation", tier: "High" },
     "teeming drone horde": { url: "https://wiki.eveuniversity.org/Teeming_Drone_Horde", difficulty: "?", foundIn: "Rogue Drones", tier: "High" },
 };
+
 
 // --- TMI Event Listeners ---
 client.on('connected', (addr, port) => {
@@ -426,17 +427,13 @@ client.on('message', (channel, userstate, message, self) => {
             });
     }
 
-    // --- NEW: !ping command ---
+    // !ping command
     else if (commandName === '!ping') {
-        const state = client.readyState(); // Get current connection state ('OPEN', 'CLOSED', etc.)
-        // Format a reply message including the state and channel
+        const state = client.readyState();
         const reply = `Pong! Bot is running. Twitch connection state: ${state}. Responding in channel: ${channel}.`;
-        // Log that we are responding
         console.log(`[client.on('message')] Responding to !ping in ${channel} with state ${state}`);
-        // Send the reply using the rate-limited safeSay function
         safeSay(channel, reply);
     }
-    // --- END: !ping command ---
 
     // **** END OF MESSAGE HANDLER ****
 });
