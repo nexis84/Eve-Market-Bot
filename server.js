@@ -26,7 +26,7 @@ if (!process.env.TWITCH_OAUTH_TOKEN) {
 
 // Twitch Bot Configuration
 const client = new tmi.Client({
-    options: { debug: false }, // Set true for verbose tmi.js logging if needed
+    // options: { debug: true }, // <-- Keep this commented/uncommented as needed for debugging
     identity: {
         username: 'Eve_twitch_market_bot',
         password: process.env.TWITCH_OAUTH_TOKEN // Ensure this includes 'chat:read' and 'chat:edit' scopes
@@ -45,6 +45,7 @@ const JITA_REGION_ID = 10000002; // The Forge Region ID
 
 // Combat site data (Data remains the same as original)
 const combatSites = {
+    // ... (combat site data omitted for brevity) ...
     "angel hideaway": { url: "https://wiki.eveuniversity.org/Angel_Hideaway", difficulty: "4/10", foundIn: "Angel Cartel", tier: "Low" },
     "blood hideaway": { url: "https://wiki.eveuniversity.org/Blood_Raider_Hideaway", difficulty: "None", foundIn: "Blood Raiders", tier: "Low" },
     "guristas hideaway": { url: "https://wiki.eveuniversity.org/Guristas_Hideaway", difficulty: "4/10", foundIn: "Guristas Pirates", tier: "Low" },
@@ -190,11 +191,9 @@ client.on('connected', (addr, port) => {
 
 client.on('disconnected', (reason) => {
     console.error(`Twitch client disconnected: ${reason}. State: ${client.readyState()}`);
-    // Optional: Implement reconnection logic here if needed
 });
 
 client.on('error', (err) => {
-    // This listener catches errors from the tmi.js library itself
     console.error('>>>>>> Twitch client library error:', err);
 });
 // --- End TMI Event Listeners ---
@@ -207,22 +206,20 @@ client.connect()
     })
     .catch(error => {
         console.error(">>>>>> Twitch client failed to connect:", error);
-        process.exit(1); // Exit if connection fails initially
+        process.exit(1);
     });
 
 
 // Function to safely send messages using the chat limiter
 async function safeSay(channel, message) {
     return chatLimiter.schedule(() => {
-        console.log(`[safeSay] Attempting to send to ${channel}: "${message.substring(0, 50)}..."`); // Log first part of message
+        console.log(`[safeSay] Attempting to send to ${channel}: "${message.substring(0, 50)}..."`);
         return client.say(channel, message)
             .then(() => {
                 console.log(`[safeSay] Message supposedly sent successfully to ${channel}.`);
             })
             .catch(err => {
-                // Catch errors specifically from client.say
                 console.error(`[safeSay] >>>>> ERROR sending message to ${channel}:`, err);
-                // Rethrow or handle as needed. For now, just log.
             });
     });
 }
@@ -230,9 +227,7 @@ async function safeSay(channel, message) {
 // Function to fetch market data for an item
 async function fetchMarketData(itemName, typeID, channel, retryCount = 0) {
     try {
-        // Log the channel received by *this* function
         console.log(`[fetchMarketData] Start: Fetching market data for ${itemName} (TypeID: ${typeID}), received channel: ${channel}, Retry: ${retryCount}`);
-        // Call the ESI function directly, passing the channel along
         await fetchMarketDataFromESI(itemName, typeID, channel, retryCount);
         console.log(`[fetchMarketData] End: Completed fetch attempt for ${itemName} (TypeID: ${typeID})`);
 
@@ -245,7 +240,6 @@ async function fetchMarketData(itemName, typeID, channel, retryCount = 0) {
 
 async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0) {
     try {
-        // Log the channel received by *this* function
         console.log(`[fetchMarketDataFromESI] Start ESI Call: Fetching for ${itemName} (TypeID: ${typeID}), received channel: ${channel}, Retry: ${retryCount}`);
 
         const sellOrdersURL = `https://esi.evetech.net/latest/markets/${JITA_REGION_ID}/orders/?datasource=tranquility&order_type=sell&type_id=${typeID}`;
@@ -255,12 +249,12 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
             apiLimiter.schedule(() => axios.get(sellOrdersURL, {
                 headers: { 'User-Agent': USER_AGENT },
                 validateStatus: (status) => status >= 200 && status < 500,
-                timeout: 7000 // ESI Timeout
+                timeout: 7000
             })),
             apiLimiter.schedule(() => axios.get(buyOrdersURL, {
                 headers: { 'User-Agent': USER_AGENT },
                 validateStatus: (status) => status >= 200 && status < 500,
-                timeout: 7000 // ESI Timeout
+                timeout: 7000
             }))
         ]);
 
@@ -291,17 +285,15 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
             return;
         }
 
-        // Find the lowest sell price in Jita system
         const jitaSellOrders = sellOrders.filter(order => order.system_id === JITA_SYSTEM_ID);
         const lowestSellOrder = jitaSellOrders.length > 0
             ? jitaSellOrders.reduce((min, order) => (order.price < min.price ? order : min), jitaSellOrders[0])
-            : null; // No Jita station sell orders
+            : null;
 
-        // Find the highest buy price in Jita system
          const jitaBuyOrders = buyOrders.filter(order => order.system_id === JITA_SYSTEM_ID);
         const highestBuyOrder = jitaBuyOrders.length > 0
             ? jitaBuyOrders.reduce((max, order) => (order.price > max.price ? order : max), jitaBuyOrders[0])
-            : null; // No Jita station buy orders
+            : null;
 
         let message = `${itemName} - `;
         if (lowestSellOrder) {
@@ -322,7 +314,6 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
              console.log(`[fetchMarketDataFromESI] No Jita station buy orders for ${itemName}`);
         }
 
-        // Use safeSay to send the final message
         await safeSay(channel, message);
 
     } catch (error) {
@@ -330,10 +321,10 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
             console.error(`[fetchMarketDataFromESI] Axios Error: ${error.message}, Retry: ${retryCount} for ${itemName}`, error.code === 'ECONNABORTED' ? '(Timeout)' : '');
             if (error.response) {
                 if (error.response.status === 503 && retryCount < 3) {
-                    const retryDelay = Math.pow(2, retryCount) * 1500; // Exponential backoff
+                    const retryDelay = Math.pow(2, retryCount) * 1500;
                     console.warn(`[fetchMarketDataFromESI] ESI Temporarily Unavailable (503) for "${itemName}". Retrying in ${retryDelay / 1000} seconds...`);
                     await new Promise(resolve => setTimeout(resolve, retryDelay));
-                    return await fetchMarketDataFromESI(itemName, typeID, channel, retryCount + 1); // Await and return recursive call
+                    return await fetchMarketDataFromESI(itemName, typeID, channel, retryCount + 1);
                 } else if (error.response.status === 503) {
                      console.error(`[fetchMarketDataFromESI] ESI Unavailable (503) for "${itemName}" after multiple retries.`);
                      await safeSay(channel, `❌ ESI Temporarily Unavailable for "${itemName}". Please try again later. ❌`);
@@ -349,7 +340,7 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
             console.error(`[fetchMarketDataFromESI] Non-Axios Error processing "${itemName}":`, error);
             await safeSay(channel, `❌ An internal error occurred while processing data for "${itemName}". ❌`);
         }
-        return; // Explicitly return undefined on error
+        return;
     }
 }
 
@@ -359,10 +350,7 @@ client.on('message', (channel, userstate, message, self) => {
     // **** START OF MESSAGE HANDLER ****
     if (self) return; // Ignore messages from the bot itself
 
-    // --- NEW LOG ---
-    // Log details immediately upon receiving the message
     console.log(`--------\n[client.on('message')] START | Channel: ${channel} | User: ${userstate.username} | State: ${client.readyState()} | Message: "${message}"\n--------`);
-    // --- END NEW LOG ---
 
     const args = message.trim().split(/\s+/);
     const commandName = (args.shift() || '').toLowerCase();
@@ -378,26 +366,8 @@ client.on('message', (channel, userstate, message, self) => {
              return;
          }
 
-         // --- TEMPORARY SIMPLIFIED TEST BLOCK (ENABLE/DISABLE AS NEEDED) ---
-         /*
-         const testMessage = `Direct reply test in ${channel} for !market "${itemName}"`;
-         console.log(`[client.on('message')] Attempting SIMPLIFIED send: "${testMessage}"`);
-         client.say(channel, testMessage) // Use client.say directly *for this test only* to bypass limiter queue
-             .then(() => {
-                 console.log(`[client.on('message')] SIMPLIFIED message sent successfully to ${channel}.`);
-             })
-             .catch(err => {
-                 console.error(`[client.on('message')] >>>>> ERROR sending SIMPLIFIED message to ${channel}:`, err);
-             });
-         return; // Stop processing here for the test
-         */
-         // --- END TEMPORARY SIMPLIFIED TEST BLOCK ---
-
-
-         // --- Regular Processing ---
         getItemTypeID(itemName)
             .then(typeID => {
-                // Log the channel again right before calling fetchMarketData
                 console.log(`[client.on('message')] TypeID result for "${itemName}": ${typeID}. Preparing to fetch market data for channel: ${channel}`);
                 if (typeID) {
                     fetchMarketData(itemName, typeID, channel); // Pass the original channel variable
@@ -410,7 +380,6 @@ client.on('message', (channel, userstate, message, self) => {
                 console.error(`[client.on('message')] Error during TypeID lookup for "${itemName}":`, error);
                 safeSay(channel, `❌ Error looking up item "${itemName}": ${error.message} ❌`);
             });
-        // --- End Regular Processing ---
     }
 
     // !combat command
@@ -443,7 +412,6 @@ client.on('message', (channel, userstate, message, self) => {
 
         getItemTypeID(itemName)
             .then(typeID => {
-                 // Log channel again before sending reply
                  console.log(`[client.on('message')] TypeID result for !info "${itemName}": ${typeID}. Preparing reply for channel: ${channel}`);
                 if (typeID) {
                     const eveRefUrl = `https://everef.net/type/${typeID}`;
@@ -457,6 +425,19 @@ client.on('message', (channel, userstate, message, self) => {
                 safeSay(channel, `❌ Error looking up item "${itemName}": ${error.message} ❌`);
             });
     }
+
+    // --- NEW: !ping command ---
+    else if (commandName === '!ping') {
+        const state = client.readyState(); // Get current connection state ('OPEN', 'CLOSED', etc.)
+        // Format a reply message including the state and channel
+        const reply = `Pong! Bot is running. Twitch connection state: ${state}. Responding in channel: ${channel}.`;
+        // Log that we are responding
+        console.log(`[client.on('message')] Responding to !ping in ${channel} with state ${state}`);
+        // Send the reply using the rate-limited safeSay function
+        safeSay(channel, reply);
+    }
+    // --- END: !ping command ---
+
     // **** END OF MESSAGE HANDLER ****
 });
 
@@ -477,12 +458,11 @@ async function getItemTypeID(itemName) {
              return null;
         }
 
-        // Use apiLimiter for Fuzzwork calls too
         const searchRes = await apiLimiter.schedule(() => {
             console.log(`[getItemTypeID] Axios Call to Fuzzwork API for TypeID: "${cleanItemName}"`);
             return axios.get(`https://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(cleanItemName)}`, {
                 headers: { 'User-Agent': USER_AGENT },
-                 timeout: 5000 // Fuzzwork Timeout
+                 timeout: 5000
             });
         });
 
@@ -543,7 +523,7 @@ async function getItemTypeID(itemName) {
 
 
 // Start the Express server for Cloud Run health checks etc.
-const port = process.env.PORT || 8080; // Use 8080 for Cloud Run default
+const port = process.env.PORT || 8080;
 app.listen(port, () => {
     console.log(`Server listening on port ${port}`);
 });
