@@ -6,419 +6,455 @@ const express = require('express');
 // Set up Express server for Cloud Run
 const app = express();
 
-// Set up rate limiter
+// Set up rate limiter with Bottleneck
 const limiter = new Bottleneck({
-    minTime: 500, // Allow slightly faster rate limiting for chained lookups
-    maxConcurrent: 1
+    minTime: 500, // 500ms between requests (2 request per second), Fuzzwork recommended min is 1000ms
+    maxConcurrent: 1 // Only one request at a time
 });
 
-// --- Environment Variable Check ---
+// Ensure OAuth Token is properly set
 if (!process.env.TWITCH_OAUTH_TOKEN) {
-    console.error("FATAL: Missing TWITCH_OAUTH_TOKEN. Check environment variables.");
+    console.error("Missing TWITCH_OAUTH_TOKEN. Check your environment variables.");
     process.exit(1);
 }
-const USER_AGENT = process.env.USER_AGENT || 'EveTwitchMarketBot/1.4.0 (Maintainer: YourContactInfo@example.com)'; // PLEASE update contact info (Version Bumped)
 
-// --- Twitch Client Setup ---
+// Twitch Bot Configuration
 const client = new tmi.Client({
-    options: { debug: false },
     identity: {
-        username: 'Eve_twitch_market_bot', // Replace if needed
+        username: 'Eve_twitch_market_bot',
         password: process.env.TWITCH_OAUTH_TOKEN
     },
-    channels: ['ne_x_is', 'contempoenterprises'] // Add/remove channels as needed
+    channels: ['ne_x_is', 'contempoenterprises']
 });
 
-client.connect()
-    .then(([server, port]) => console.log(`Twitch client connected to ${server}:${port}. Listening in: ${client.opts.channels.join(', ')}`))
-    .catch((err) => {
-        console.error("FATAL: Failed to connect to Twitch:", err);
-        process.exit(1);
-    });
+// Connect the Twitch bot to the chat
+client.connect();
+console.log("Twitch client connected."); // Added connection log
 
-console.log(`Using User-Agent: ${USER_AGENT}`);
+//Set a default User Agent if one is not set in the environment variables.
+const USER_AGENT = process.env.USER_AGENT || 'TwitchBot/1.0.0 (contact@example.com)';
 
-// --- Caches ---
+// Cache for Type IDs and Combat Site Info
 const typeIDCache = new Map();
-const CACHE_EXPIRY_MS = 60 * 60 * 1000; // 1 hour for TypeIDs
-let jitaStationIDsCache = null;
-let jitaCacheTimestamp = 0;
-const JITA_CACHE_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours for Jita station list
+const combatSiteCache = new Map();
 
-// --- EVE Constants ---
-const JITA_SYSTEM_ID = 30000142;
-const JITA_REGION_ID = 10000002;
-const PLEX_TYPE_ID = 44992;
-const ESI_BASE_URL = 'https://esi.evetech.net/latest';
-const DATASOURCE = 'tranquility';
+const JITA_SYSTEM_ID = 30000142; // Jita system ID
+const JITA_REGION_ID = 10000002; // The Forge Region ID
 
-// --- Combat Site Data --- (Truncated for brevity - ensure you have the full list)
+// Combat site data (simplified for demonstration)
 const combatSites = {
     "angel hideaway": { url: "https://wiki.eveuniversity.org/Angel_Hideaway", difficulty: "4/10", foundIn: "Angel Cartel", tier: "Low" },
-    // ... Add ALL other combat site entries here ...
+    "blood hideaway": { url: "https://wiki.eveuniversity.org/Blood_Raider_Hideaway", difficulty: "None", foundIn: "Blood Raiders", tier: "Low" },
+    "guristas hideaway": { url: "https://wiki.eveuniversity.org/Guristas_Hideaway", difficulty: "4/10", foundIn: "Guristas Pirates", tier: "Low" },
+    "sansha hideaway": { url: "https://wiki.eveuniversity.org/Sansha_Hideaway", difficulty: "3/10", foundIn: "Sansha's Nation", tier: "Low" },
+    "serpentis hideaway": { url: "https://wiki.eveuniversity.org/Serpentis_Hideaway", difficulty: "3/10", foundIn: "Serpentis Corporation", tier: "Low" },
+    "drone cluster": { url: "https://wiki.eveuniversity.org/Drone_Cluster", difficulty: "None", foundIn: "Rogue Drones", tier: "Low" },
+    "angel hidden hideaway": { url: "https://wiki.eveuniversity.org/Angel_Hidden_Hideaway", difficulty: "None", foundIn: "Angel Cartel", tier: "High" },
+    "blood hidden hideaway": { url: "https://wiki.eveuniversity.org/Blood_Hidden_Hideaway", difficulty: "None", foundIn: "Blood Raiders", tier: "High" },
+    "guristas hidden hideaway": { url: "https://wiki.eveuniversity.org/Guristas_Hidden_Hideaway", difficulty: "None", foundIn: "Guristas Pirates", tier: "High" },
+    "sansha hidden hideaway": { url: "https://wiki.eveuniversity.org/Sansha_Hidden_Hideaway", difficulty: "None", foundIn: "Sansha's Nation", tier: "High" },
+    "serpentis hidden hideaway": { url: "https://wiki.eveuniversity.org/Serpentis_Hidden_Hideaway", difficulty: "None", foundIn: "Serpentis Corporation", tier: "High" },
+    "angel forsaken hideaway": { url: "https://wiki.eveuniversity.org/Angel_Forsaken_Hideaway", difficulty: "3/10", foundIn: "Angel Cartel", tier: "High" },
+    "blood forsaken hideaway": { url: "https://wiki.eveuniversity.org/Blood_Forsaken_Hideaway", difficulty: "None", foundIn: "Blood Raiders", tier: "High" },
+    "guristas forsaken hideaway": { url: "https://wiki.eveuniversity.org/Guristas_Forsaken_Hideaway", difficulty: "7/10", foundIn: "Guristas Pirates", tier: "High" },
+    "sansha forsaken hideaway": { url: "https://wiki.eveuniversity.org/Sansha_Forsaken_Hideaway", difficulty: "None", foundIn: "Sansha's Nation", tier: "High" },
+    "serpentis forsaken hideaway": { url: "https://wiki.eveuniversity.org/Serpentis_Forsaken_Hideaway", difficulty: "None", foundIn: "Serpentis Corporation", tier: "High" },
+    "angel forlorn hideaway": { url: "https://wiki.eveuniversity.org/Angel_Forlorn_Hideaway", difficulty: "None", foundIn: "Angel Cartel", tier: "High" },
+    "blood forlorn hideaway": { url: "https://wiki.eveuniversity.org/Blood_Forlorn_Hideaway", difficulty: "None", foundIn: "Blood Raiders", tier: "High" },
+    "guristas forlorn hideaway": { url: "https://wiki.eveuniversity.org/Guristas_Forlorn_Hideaway", difficulty: "None", foundIn: "Guristas Pirates", tier: "High" },
+    "sansha forlorn hideaway": { url: "https://wiki.eveuniversity.org/Sansha_Forlorn_Hideaway", difficulty: "None", foundIn: "Sansha's Nation", tier: "High" },
+    "serpentis forlorn hideaway": { url: "https://wiki.eveuniversity.org/Serpentis_Forlorn_Hideaway", difficulty: "None", foundIn: "Serpentis Corporation", tier: "High" },
+    "angel burrow": { url: "https://wiki.eveuniversity.org/Angel_Burrow", difficulty: "None", foundIn: "Angel Cartel", tier: "Low" },
+    "blood burrow": { url: "https://wiki.eveuniversity.org/Blood_Burrow", difficulty: "None", foundIn: "Blood Raiders", tier: "Low" },
+    "guristas burrow": { url: "https://wiki.eveuniversity.org/Guristas_Burrow", difficulty: "None", foundIn: "Guristas Pirates", tier: "Low" },
+    "sansha burrow": { url: "https://wiki.eveuniversity.org/Sansha_Burrow", difficulty: "None", foundIn: "Sansha's Nation", tier: "Low" },
+    "serpentis burrow": { url: "https://wiki.eveuniversity.org/Serpentis_Burrow", difficulty: "None", foundIn: "Serpentis Corporation", tier: "Low" },
+    "drone collection": { url: "https://wiki.eveuniversity.org/Drone_Collection", difficulty: "None", foundIn: "Rogue Drones", tier: "Low" },
+    "angel refuge": { url: "https://wiki.eveuniversity.org/Angel_Refuge", difficulty: "5/10", foundIn: "Angel Cartel", tier: "Low" },
+    "blood refuge": { url: "https://wiki.eveuniversity.org/Blood_Refuge", difficulty: "4/10", foundIn: "Blood Raiders", tier: "Low" },
+    "guristas refuge": { url: "https://wiki.eveuniversity.org/Guristas_Refuge", difficulty: "4/10", foundIn: "Guristas Pirates", tier: "Low" },
+    "sansha refuge": { url: "https://wiki.eveuniversity.org/Sansha_Refuge", difficulty: "3/10", foundIn: "Sansha's Nation", tier: "Low" },
+    "serpentis refuge": { url: "https://wiki.eveuniversity.org/Serpentis_Refuge", difficulty: "3/10", foundIn: "Serpentis Corporation", tier: "Low" },
+    "drone assembly": { url: "https://wiki.eveuniversity.org/Drone_Assembly", difficulty: "3/10", foundIn: "Rogue Drones", tier: "Low" },
+    "angel den": { url: "https://wiki.eveuniversity.org/Angel_Den", difficulty: "5/10", foundIn: "Angel Cartel", tier: "Mid" },
+    "blood den": { url: "https://wiki.eveuniversity.org/Blood_Den", difficulty: "5/10", foundIn: "Blood Raiders", tier: "Mid" },
+    "guristas den": { url: "https://wiki.eveuniversity.org/Guristas_Den", difficulty: "5/10", foundIn: "Guristas Pirates", tier: "Mid" },
+    "sansha den": { url: "https://wiki.eveuniversity.org/Sansha_Den", difficulty: "5/10", foundIn: "Sansha's Nation", tier: "Mid" },
+    "serpentis den": { url: "https://wiki.eveuniversity.org/Serpentis_Den", difficulty: "5/10", foundIn: "Serpentis Corporation", tier: "Mid" },
+    "drone gathering": { url: "https://wiki.eveuniversity.org/Drone_Gathering", difficulty: "3/10", foundIn: "Rogue Drones", tier: "Mid" },
+    "angel hidden den": { url: "https://wiki.eveuniversity.org/Angel_Hidden_Den", difficulty: "None", foundIn: "Angel Cartel", tier: "High" },
+    "blood hidden den": { url: "https://wiki.eveuniversity.org/Blood_Hidden_Den", difficulty: "None", foundIn: "Blood Raiders", tier: "High" },
+    "guristas hidden den": { url: "https://wiki.eveuniversity.org/Guristas_Hidden_Den", difficulty: "6/10", foundIn: "Guristas Pirates", tier: "High" },
+    "sansha hidden den": { url: "https://wiki.eveuniversity.org/Sansha_Hidden_Den", difficulty: "None", foundIn: "Sansha's Nation", tier: "High" },
+    "serpentis hidden den": { url: "https://wiki.eveuniversity.org/Serpentis_Hidden_Den", difficulty: "None", foundIn: "Serpentis Corporation", tier: "High" },
+    "angel forsaken den": { url: "https://wiki.eveuniversity.org/Angel_Forsaken_Den", difficulty: "7/10", foundIn: "Angel Cartel", tier: "High" },
+    "blood forsaken den": { url: "https://wiki.eveuniversity.org/Blood_Forsaken_Den", difficulty: "None", foundIn: "Blood Raiders", tier: "High" },
+    "guristas forsaken den": { url: "https://wiki.eveuniversity.org/Guristas_Forsaken_Den", difficulty: "7/10", foundIn: "Guristas Pirates", tier: "High" },
+    "sansha forsaken den": { url: "https://wiki.eveuniversity.org/Sansha_Forsaken_Den", difficulty: "None", foundIn: "Sansha's Nation", tier: "High" },
+    "serpentis forsaken den": { url: "https://wiki.eveuniversity.org/Serpentis_Forsaken_Den", difficulty: "7/10", foundIn: "Serpentis Corporation", tier: "High" },
+    "angel forlorn den": { url: "https://wiki.eveuniversity.org/Angel_Forlorn_Den", difficulty: "7/10", foundIn: "Angel Cartel", tier: "High" },
+    "blood forlorn den": { url: "https://wiki.eveuniversity.org/Blood_Forlorn_Den", difficulty: "None", foundIn: "Blood Raiders", tier: "High" },
+    "guristas forlorn den": { url: "https://wiki.eveuniversity.org/Guristas_Forlorn_Den", difficulty: "7/10", foundIn: "Guristas Pirates", tier: "High" },
+    "sansha forlorn den": { url: "https://wiki.eveuniversity.org/Sansha_Forlorn_Den", difficulty: "None", foundIn: "Sansha's Nation", tier: "High" },
+    "serpentis forlorn den": { url: "https://wiki.eveuniversity.org/Serpentis_Forlorn_Den", difficulty: "None", foundIn: "Serpentis Corporation", tier: "High" },
+    "angel yard": { url: "https://wiki.eveuniversity.org/Angel_Yard", difficulty: "5/10", foundIn: "Angel Cartel", tier: "Mid" },
+    "blood yard": { url: "https://wiki.eveuniversity.org/Blood_Yard", difficulty: "6/10", foundIn: "Blood Raiders", tier: "Mid" },
+    "guristas yard": { url: "https://wiki.eveuniversity.org/Guristas_Yard", difficulty: "5/10", foundIn: "Guristas Pirates", tier: "Mid" },
+    "sansha yard": { url: "https://wiki.eveuniversity.org/Sansha_Yard", difficulty: "6/10", foundIn: "Sansha's Nation", tier: "Mid" },
+    "serpentis yard": { url: "https://wiki.eveuniversity.org/Serpentis_Yard", difficulty: "6/10", foundIn: "Serpentis Corporation", tier: "Mid" },
+    "drone surveillance": { url: "https://wiki.eveuniversity.org/Drone_Surveillance", difficulty: "3/10", foundIn: "Rogue Drones", tier: "Mid" },
+    "angel rally point": { url: "https://wiki.eveuniversity.org/Angel_Rally_Point", difficulty: "6/10", foundIn: "Angel Cartel", tier: "Mid" },
+    "blood rally point": { url: "https://wiki.eveuniversity.org/Blood_Rally_Point", difficulty: "6/10", foundIn: "Blood Raiders", tier: "Mid" },
+    "guristas rally point": { url: "https://wiki.eveuniversity.org/Guristas_Rally_Point", difficulty: "6/10", foundIn: "Guristas Pirates", tier: "Mid" },
+    "sansha rally point": { url: "https://wiki.eveuniversity.org/Sansha_Rally_Point", difficulty: "6/10", foundIn: "Sansha's Nation", tier: "Mid" },
+    "serpentis rally point": { url: "https://wiki.eveuniversity.org/Serpentis_Rally_Point", difficulty: "6/10", foundIn: "Serpentis Corporation", tier: "Mid" },
+    "drone menagerie": { url: "https://wiki.eveuniversity.org/Drone_Menagerie", difficulty: "5/10", foundIn: "Rogue Drones", tier: "Mid" },
+    "angel hidden rally point": { url: "https://wiki.eveuniversity.org/Angel_Hidden_Rally_Point", difficulty: "6/10", foundIn: "Angel Cartel", tier: "High" },
+    "blood hidden rally point": { url: "https://wiki.eveuniversity.org/Blood_Hidden_Rally_Point", difficulty: "None", foundIn: "Blood Raiders", tier: "High" },
+    "guristas hidden rally point": { url: "https://wiki.eveuniversity.org/Guristas_Hidden_Rally_Point", difficulty: "9/10", foundIn: "Guristas Pirates", tier: "High" },
+    "sansha hidden rally point": { url: "https://wiki.eveuniversity.org/Sansha_Hidden_Rally_Point", difficulty: "9/10", foundIn: "Sansha's Nation", tier: "High" },
+    "serpentis hidden rally point": { url: "https://wiki.eveuniversity.org/Serpentis_Hidden_Rally_Point", difficulty: "None", foundIn: "Serpentis Corporation", tier: "High" },
+    "angel forsaken rally point": { url: "https://wiki.eveuniversity.org/Angel_Forsaken_Rally_Point", difficulty: "8/10", foundIn: "Angel Cartel", tier: "High" },
+    "blood forsaken rally point": { url: "https://wiki.eveuniversity.org/Blood_Forsaken_Rally_Point", difficulty: "8/10", foundIn: "Blood Raiders", tier: "High" },
+    "guristas forsaken rally point": { url: "https://wiki.eveuniversity.org/Guristas_Forsaken_Rally_Point", difficulty: "8/10", foundIn: "Guristas Pirates", tier: "High" },
+    "sansha forsaken rally point": { url: "https://wiki.eveuniversity.org/Sansha_Forsaken_Rally_Point", difficulty: "8/10", foundIn: "Sansha's Nation", tier: "High" },
+    "serpentis forsaken rally point": { url: "https://wiki.eveuniversity.org/Serpentis_Forsaken_Rally_Point", difficulty: "8/10", foundIn: "Serpentis Corporation", tier: "High" },
+    "angel forlorn rally point": { url: "https://wiki.eveuniversity.org/Angel_Forlorn_Rally_Point", difficulty: "None", foundIn: "Angel Cartel", tier: "High" },
+    "blood forlorn rally point": { url: "https://wiki.eveuniversity.org/Blood_Forlorn_Rally_Point", difficulty: "8/10", foundIn: "Blood Raiders", tier: "High" },
+    "guristas forlorn rally point": { url: "https://wiki.eveuniversity.org/Guristas_Forlorn_Rally_Point", difficulty: "8/10", foundIn: "Guristas Pirates", tier: "High" },
+    "sansha forlorn rally point": { url: "https://wiki.eveuniversity.org/Sansha_Forlorn_Rally_Point", difficulty: "8/10", foundIn: "Sansha's Nation", tier: "High" },
+    "serpentis forlorn rally point": { url: "https://wiki.eveuniversity.org/Serpentis_Forlorn_Rally_Point", difficulty: "8/10", foundIn: "Serpentis Corporation", tier: "High" },
+    "angel port": { url: "https://wiki.eveuniversity.org/Angel_Port", difficulty: "7/10", foundIn: "Angel Cartel", tier: "Mid" },
+    "blood port": { url: "https://wiki.eveuniversity.org/Blood_Port", difficulty: "7/10", foundIn: "Blood Raiders", tier: "Mid" },
+    "guristas port": { url: "https://wiki.eveuniversity.org/Guristas_Port", difficulty: "7/10", foundIn: "Guristas Pirates", tier: "Mid" },
+    "sansha port": { url: "https://wiki.eveuniversity.org/Sansha_Port", difficulty: "7/10", foundIn: "Sansha's Nation", tier: "Mid" },
+    "serpentis port": { url: "https://wiki.eveuniversity.org/Serpentis_Port", difficulty: "7/10", foundIn: "Serpentis Corporation", tier: "Mid" },
+    "drone herd": { url: "https://wiki.eveuniversity.org/Drone_Herd", difficulty: "5/10", foundIn: "Rogue Drones", tier: "Mid" },
+    "angel hub": { url: "https://wiki.eveuniversity.org/Angel_Hub", difficulty: "8/10", foundIn: "Angel Cartel", tier: "Mid" },
+    "blood hub": { url: "https://wiki.eveuniversity.org/Blood_Hub", difficulty: "8/10", foundIn: "Blood Raiders", tier: "Mid" },
+    "guristas hub": { url: "https://wiki.eveuniversity.org/Guristas_Hub", difficulty: "8/10", foundIn: "Guristas Pirates", tier: "Mid" },
+    "sansha hub": { url: "https://wiki.eveuniversity.org/Sansha_Hub", difficulty: "8/10", foundIn: "Sansha's Nation", tier: "Mid" },
+    "serpentis hub": { url: "https://wiki.eveuniversity.org/Serpentis_Hub", difficulty: "8/10", foundIn: "Serpentis Corporation", tier: "Mid" },
+    "drone squad": { url: "https://wiki.eveuniversity.org/Drone_Squad", difficulty: "10/10", foundIn: "Rogue Drones", tier: "Mid" },
+    "angel hidden hub": { url: "https://wiki.eveuniversity.org/Angel_Hidden_Hub", difficulty: "9/10", foundIn: "Angel Cartel", tier: "High" },
+    "blood hidden hub": { url: "https://wiki.eveuniversity.org/Blood_Hidden_Hub", difficulty: "None", foundIn: "Blood Raiders", tier: "High" },
+    "guristas hidden hub": { url: "https://wiki.eveuniversity.org/Guristas_Hidden_Hub", difficulty: "9/10", foundIn: "Guristas Pirates", tier: "High" },
+    "sansha hidden hub": { url: "https://wiki.eveuniversity.org/Sansha_Hidden_Hub", difficulty: "Unknown", foundIn: "Sansha's Nation", tier: "High" },
+    "serpentis hidden hub": { url: "https://wiki.eveuniversity.org/Serpentis_Hidden_Hub", difficulty: "None", foundIn: "Serpentis Corporation", tier: "High" },
+    "angel forsaken hub": { url: "https://wiki.eveuniversity.org/Angel_Forsaken_Hub", difficulty: "9/10", foundIn: "Angel Cartel", tier: "High" },
+    "blood forsaken hub": { url: "https://wiki.eveuniversity.org/Blood_Forsaken_Hub", difficulty: "None", foundIn: "Blood Raiders", tier: "High" },
+    "guristas forsaken hub": { url: "https://wiki.eveuniversity.org/Guristas_Forsaken_Hub", difficulty: "9/10", foundIn: "Guristas Pirates", tier: "High" },
+    "sansha forsaken hub": { url: "https://wiki.eveuniversity.org/Sansha_Forsaken_Hub", difficulty: "9/10", foundIn: "Sansha's Nation", tier: "High" },
+    "serpentis forsaken hub": { url: "https://wiki.eveuniversity.org/Serpentis_Forsaken_Hub", difficulty: "9/10", foundIn: "Serpentis Corporation", tier: "High" },
+    "angel forlorn hub": { url: "https://wiki.eveuniversity.org/Angel_Forlorn_Hub", difficulty: "9/10", foundIn: "Angel Cartel", tier: "High" },
+    "blood forlorn hub": { url: "https://wiki.eveuniversity.org/Blood_Forlorn_Hub", difficulty: "Unknown", foundIn: "Blood Raiders", tier: "High" },
+    "guristas forlorn hub": { url: "https://wiki.eveuniversity.org/Guristas_Forlorn_Hub", difficulty: "9/10", foundIn: "Guristas Pirates", tier: "High" },
+    "sansha forlorn hub": { url: "https://wiki.eveuniversity.org/Sansha_Forlorn_Hub", difficulty: "9/10", foundIn: "Sansha's Nation", tier: "High" },
+    "serpentis forlorn hub": { url: "https://wiki.eveuniversity.org/Serpentis_Forlorn_Hub", difficulty: "9/10", foundIn: "Serpentis Corporation", tier: "High" },
+    "angel haven": { url: "https://wiki.eveuniversity.org/Angel_Haven", difficulty: "10/10", foundIn: "Angel Cartel", tier: "Mid" },
+    "blood haven": { url: "https://wiki.eveuniversity.org/Blood_Haven", difficulty: "10/10", foundIn: "Blood Raiders", tier: "Mid" },
+    "guristas haven": { url: "https://wiki.eveuniversity.org/Guristas_Haven", difficulty: "10/10", foundIn: "Guristas Pirates", tier: "Mid" },
+    "sansha haven": { url: "https://wiki.eveuniversity.org/Sansha_Haven", difficulty: "10/10", foundIn: "Sansha's Nation", tier: "Mid" },
+    "serpentis haven": { url: "https://wiki.eveuniversity.org/Serpentis_Haven", difficulty: "10/10", foundIn: "Serpentis Corporation", tier: "Mid" },
+    "drone patrol": { url: "https://wiki.eveuniversity.org/Drone_Patrol", difficulty: "10/10", foundIn: "Rogue Drones", tier: "Mid" },
+    "angel sanctum": { url: "https://wiki.eveuniversity.org/Angel_Sanctum", difficulty: "N/A", foundIn: "Angel Cartel", tier: "High" },
+    "blood sanctum": { url: "https://wiki.eveuniversity.org/Blood_Sanctum", difficulty: "10/10", foundIn: "Blood Raiders", tier: "High" },
+    "guristas sanctum": { url: "https://wiki.eveuniversity.org/Guristas_Sanctum", difficulty: "10/10", foundIn: "Guristas Pirates", tier: "High" },
+    "sansha sanctum": { url: "https://wiki.eveuniversity.org/Sansha_Sanctum", difficulty: "10/10", foundIn: "Sansha's Nation", tier: "High" },
+    "serpentis sanctum": { url: "https://wiki.eveuniversity.org/Serpentis_Sanctum", difficulty: "10/10", foundIn: "Serpentis Corporation", tier: "High" },
+    "drone horde": { url: "https://wiki.eveuniversity.org/Drone_Horde", difficulty: "10/10", foundIn: "Rogue Drones", tier: "High" },
+    "angel forsaken sanctum": { url: "https://wiki.eveuniversity.org/Angel_Forsaken_Sanctum", difficulty: "?", foundIn: "Angel Cartel", tier: "High" },
+    "blood forsaken sanctum": { url: "https://wiki.eveuniversity.org/Blood_Forsaken_Sanctum", difficulty: "?", foundIn: "Blood Raiders", tier: "High" },
+    "guristas forsaken sanctum": { url: "https://wiki.eveuniversity.org/Guristas_Forsaken_Sanctum", difficulty: "?", foundIn: "Guristas Pirates", tier: "High" },
+    "sansha forsaken sanctum": { url: "https://wiki.eveuniversity.org/Sansha_Forsaken_Sanctum", difficulty: "?", foundIn: "Sansha's Nation", tier: "High" },
+    "serpentis forsaken sanctum": { url: "https://wiki.eveuniversity.org/Serpentis_Forsaken_Sanctum", difficulty: "10/10", foundIn: "Serpentis Corporation", tier: "High" },
     "teeming drone horde": { url: "https://wiki.eveuniversity.org/Teeming_Drone_Horde", difficulty: "?", foundIn: "Rogue Drones", tier: "High" },
 };
 
-// --- Helper Functions ---
-
-async function safeSay(channel, message) {
+// Function to fetch market data for an item
+async function fetchMarketData(itemName, typeID, channel, retryCount = 0) {
     try {
-        // Add slight delay before sending messages to avoid Twitch global rate limits if many commands come at once
-        await new Promise(resolve => setTimeout(resolve, 300));
-        await client.say(channel, message);
-    } catch (err) {
-        console.error(`[safeSay] Error sending message to ${channel}: ${err}`);
+        console.log(`[fetchMarketData] Start: Fetching market data for ${itemName} (TypeID: ${typeID}), Retry: ${retryCount}`);
+        return fetchMarketDataFromESI(itemName, typeID, channel, retryCount);
+
+
+    } catch (error) {
+        console.error(`[fetchMarketData] General Error: ${error.message}, Retry: ${retryCount}`);
+        client.say(channel, `❌ Error fetching data for "${itemName}": ${error.message} ❌`);
     }
 }
 
-function formatISK(price) {
-    if (typeof price !== 'number' || isNaN(price)) return 'N/A';
-    return price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
 
-async function getJitaStationIDs() {
-    // ... (getJitaStationIDs function remains unchanged from previous answer) ...
-    const now = Date.now();
-    if (jitaStationIDsCache && (now - jitaCacheTimestamp < JITA_CACHE_EXPIRY_MS)) {
-        return jitaStationIDsCache;
-    }
-    console.log("[getJitaStationIDs] Fetching Jita system info for station IDs...");
-    const systemInfoUrl = `${ESI_BASE_URL}/universe/systems/${JITA_SYSTEM_ID}/`;
+async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0) {
     try {
-        const response = await limiter.schedule(() => axios.get(systemInfoUrl, {
-            params: { datasource: DATASOURCE, language: 'en-us' },
-            headers: { 'User-Agent': USER_AGENT },
-            validateStatus: (status) => status === 200
-        }));
-        if (response.data?.stations && Array.isArray(response.data.stations)) {
-            jitaStationIDsCache = response.data.stations;
-            jitaCacheTimestamp = now;
-            console.log(`[getJitaStationIDs] Cached ${jitaStationIDsCache.length} station IDs for Jita system.`);
-            return jitaStationIDsCache;
+        // console.log(`[fetchMarketDataFromESI] Start: Fetching market data from ESI for ${itemName} (TypeID: ${typeID}), Retry: ${retryCount}`);
+
+        const sellOrdersURL = `https://esi.evetech.net/latest/markets/${JITA_REGION_ID}/orders/?datasource=tranquility&order_type=sell&type_id=${typeID}`;
+        const buyOrdersURL = `https://esi.evetech.net/latest/markets/${JITA_REGION_ID}/orders/?datasource=tranquility&order_type=buy&type_id=${typeID}`;
+
+        const [sellOrdersRes, buyOrdersRes] = await Promise.all([
+            axios.get(sellOrdersURL, {
+                headers: { 'User-Agent': USER_AGENT },
+                validateStatus: function (status) {
+                    return status >= 200 && status < 500; // Accept all status codes between 200 and 499 (inclusive)
+                },
+            }),
+            axios.get(buyOrdersURL, {
+                headers: { 'User-Agent': USER_AGENT },
+                validateStatus: function (status) {
+                    return status >= 200 && status < 500; // Accept all status codes between 200 and 499 (inclusive)
+                },
+            })
+        ]);
+
+
+        if (sellOrdersRes.status !== 200) {
+            console.error(`[fetchMarketDataFromESI] Error fetching sell orders. HTTP Status: ${sellOrdersRes.status}, Response: ${JSON.stringify(sellOrdersRes.data)}`);
+            client.say(channel, `❌ Error fetching sell orders for "${itemName}": HTTP ${sellOrdersRes.status}. ❌`);
+            return;
+        }
+        if (buyOrdersRes.status !== 200) {
+            console.error(`[fetchMarketDataFromESI] Error fetching buy orders. HTTP Status: ${buyOrdersRes.status}, Response: ${JSON.stringify(buyOrdersRes.data)}`);
+            client.say(channel, `❌ Error fetching buy orders for "${itemName}": HTTP ${buyOrdersRes.status}. ❌`);
+            return;
+        }
+        const sellOrders = sellOrdersRes.data;
+        const buyOrders = buyOrdersRes.data;
+
+        if (!sellOrders || sellOrders.length === 0) {
+            console.error(`[fetchMarketDataFromESI] No sell orders found for "${itemName}" (TypeID: ${typeID}) in Jita`);
+            client.say(channel, `❌ No sell orders for "${itemName}" in Jita. ❌`);
+            return;
+        }
+
+        if (!buyOrders || buyOrders.length === 0) {
+            console.error(`[fetchMarketDataFromESI] No buy orders found for "${itemName}" (TypeID: ${typeID}) in Jita`);
+            client.say(channel, `❌ No buy orders for "${itemName}" in Jita. ❌`);
+            return;
+        }
+
+        // Find the lowest sell price
+        const lowestSellOrder = sellOrders.reduce((min, order) => (order.price < min.price ? order : min), sellOrders[0]);
+        // Find the highest buy price
+        const highestBuyOrder = buyOrders.reduce((max, order) => (order.price > max.price ? order : max), buyOrders[0]);
+
+        const sellPrice = parseFloat(lowestSellOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2 });
+        const buyPrice = parseFloat(highestBuyOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2 });
+        //    console.log(`[fetchMarketDataFromESI] Output: Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK, Retry: ${retryCount}`);
+        client.say(channel, `Sell: ${sellPrice} ISK, Buy: ${buyPrice} ISK`);
+        // console.log(`[fetchMarketDataFromESI] End (Success) - Success getting data from ESI, Retry: ${retryCount}`);
+
+    } catch (error) {
+        if (axios.isAxiosError(error)) {
+            console.log(`[fetchMarketDataFromESI] Catch - Axios Error: ${error.message}, Retry: ${retryCount}`);
+            if (error.response) {
+                if (error.response.status === 503) {
+                    const retryDelay = Math.pow(2, retryCount) * 1000; // Exponential backoff
+                    console.error(`[fetchMarketDataFromESI] ESI Temporarily Unavailable (503) for "${itemName}" (TypeID: ${typeID}). Retrying in ${retryDelay / 1000} seconds...`);
+                    if (retryCount < 3) {
+                        await new Promise(resolve => setTimeout(resolve, retryDelay));
+                        return fetchMarketDataFromESI(itemName, typeID, channel, retryCount + 1);
+                    } else {
+                        console.error(`[fetchMarketDataFromESI] ESI Unavailable (503) for "${itemName}" (TypeID: ${typeID}) after multiple retries.`);
+                        client.say(channel, `❌ ESI Temporarily Unavailable for "${itemName}". ❌`);
+                        return;
+                    }
+                    return;
+                } else {
+                    console.error(`[fetchMarketDataFromESI] Error fetching market data for "${itemName}" (TypeID: ${typeID}). HTTP Status: ${error.response.status}, Response: ${JSON.stringify(error.response.data)}`);
+                    client.say(channel, `❌ Error fetching market data for "${itemName}": HTTP ${error.response.status}. ❌`);
+                    return;
+                }
+            } else {
+                console.error(`[fetchMarketDataFromESI] Error fetching market data for "${itemName}" (TypeID: ${typeID}):`, error.message);
+                client.say(channel, `❌ Error fetching data for "${itemName}": ${error.message} ❌`);
+                return;
+            }
         } else {
-            console.error("[getJitaStationIDs] Unexpected ESI response structure:", response.data);
+            console.error(`[fetchMarketDataFromESI] Error fetching market data for "${itemName}":`, error);
+            client.say(channel, `❌ Error fetching data for "${itemName}": ${error.message} ❌`);
+        }
+
+    }
+}
+
+// Function to handle commands from Twitch chat
+client.on('message', (channel, userstate, message, self) => {
+    if (self) return;
+    // console.log(`[client.on('message')] Message Received: ${message}`); // Logging message received
+
+    // Check if the message starts with the command !market
+    if (message.toLowerCase().startsWith('!market')) {
+        // Extract the item name from the message
+        let itemName = message.slice(8).trim();
+        console.log('[client.on(\'message\')] Original command:', message);
+        console.log('[client.on(\'message\')] Item Name:', itemName);
+
+        // Check if the item name is empty
+        if (!itemName) {
+            client.say(channel, '❌ Please specify an item to search for. ❌');
+            console.log('[client.on(\'message\')] Empty Item Name');
+            return;
+        }
+
+        // Get the type ID using getItemTypeID
+        getItemTypeID(itemName)
+            .then((typeID) => {
+                // if a type ID is received, fetch market data.
+                if (typeID) {
+                    // console.log(`[client.on('message')] TypeID Found: ${typeID}, Calling fetchMarketData`);
+                    fetchMarketData(itemName, typeID, channel);
+                } else {
+                    // if no typeID was found, report this to the user.
+                    client.say(channel, `❌ No TypeID found for "${itemName}". ❌`);
+                    console.log(`[client.on('message')] No TypeID found`);
+                }
+            })
+            .catch((error) => {
+                // Report any errors fetching the TypeID to the user
+                client.say(channel, `❌ Error fetching TypeID for "${itemName}": ${error.message} ❌`);
+                console.log(`[client.on('message')] TypeID Error ${error.message}`);
+            });
+    }
+
+    // !combat command
+    if (message.toLowerCase().startsWith('!combat')) {
+        // Extract the item name or ID from the message
+        const itemIdentifier = message.slice(7).trim().toLowerCase(); // Changed from 6 to 7 and toLowerCase()
+        console.log('[client.on(\'message\')] !combat command:', message); // Changed from !info to !combat
+        console.log('[client.on(\'message\')] Item Identifier:', itemIdentifier);
+
+        // Check if the item name or ID is empty
+        if (!itemIdentifier) {
+            client.say(channel, '❌ Please specify a combat site name. ❌'); // Changed the message
+            return;
+        }
+
+        // Check if it is a combat site.
+        if (combatSites.hasOwnProperty(itemIdentifier)) {
+            const siteData = combatSites[itemIdentifier];
+            client.say(channel, `${itemIdentifier} Info: ${siteData.url}, Difficulty: ${siteData.difficulty}, Found In: ${siteData.foundIn}, Tier: ${siteData.tier}`);
+            return;
+        } else {
+            client.say(channel, `❌ Combat site "${itemIdentifier}" not found. ❌`); //tell user if site is not found
+        }
+    }
+    // !info command
+    if (message.toLowerCase().startsWith('!info')) {
+        const itemName = message.slice(6).trim(); // Remove '!info ' and get the item name
+        console.log(`[client.on('message')] !info command, Item Name: ${itemName}`);
+
+        if (!itemName) {
+            client.say(channel, '❌ Please specify an item to search for. ❌');
+            return;
+        }
+
+        getItemTypeID(itemName)
+            .then((typeID) => {
+                if (typeID) {
+                    const eveRefUrl = `https://everef.net/type/${typeID}`; // Removed the question mark
+                    client.say(channel, `${itemName} info: ${eveRefUrl}`);
+                } else {
+                    client.say(channel, `❌ No TypeID found for "${itemName}". ❌`);
+                }
+            })
+            .catch((error) => {
+                client.say(channel, `❌ Error fetching TypeID for "${itemName}": ${error.message} ❌`);
+                console.error(`[client.on('message')] Error fetching TypeID:`, error);
+            });
+    }
+});
+
+
+// Function to get the TypeID of an item based on its name
+async function getItemTypeID(itemName) {
+    const lowerCaseItemName = itemName.toLowerCase(); //convert to lower case
+    if (typeIDCache.has(lowerCaseItemName)) {
+        //  console.log(`[getItemTypeID] Using cached TypeID for "${itemName}"`)
+        return typeIDCache.get(lowerCaseItemName);
+    }
+
+    try {
+        // Fetch the typeID using the fuzzwork api
+        let cleanItemName = itemName.replace(/[^a-zA-Z0-9\s]/g, '');
+        const searchRes = await limiter.schedule(() => {
+            //  console.log(`[getItemTypeID] Axios Call to Fuzzwork TypeID: ${itemName}`);
+            return axios.get(`http://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(cleanItemName)}`, {
+                headers: { 'User-Agent': USER_AGENT }
+            });
+        });
+
+
+        // Handle non-200 status codes
+        if (searchRes.status !== 200) {
+            console.error(`[getItemTypeID] Error fetching TypeID for "${itemName}": HTTP ${searchRes.status}. Response was: ${JSON.stringify(searchRes.data)}`);
             return null;
         }
-    } catch (error) {
-        console.error(`[getJitaStationIDs] Error fetching Jita system info: ${error.message}`);
-        jitaStationIDsCache = null; // Don't cache failure
-        jitaCacheTimestamp = 0;
-        return null;
-    }
-}
 
-// --- Core Logic: Type ID Lookup Sub-Functions ---
+        // Check if the response is a string or an object.
+        if (typeof searchRes.data === 'string') {
 
-async function _esiSearch(lowerCaseItemName, strict = true) {
-    const searchUrl = `${ESI_BASE_URL}/search/`;
-    const params = { categories: 'inventory_type', datasource: DATASOURCE, language: 'en-us', search: lowerCaseItemName, strict };
-    try {
-        const esiRes = await limiter.schedule(() => axios.get(searchUrl, {
-            params, headers: { 'User-Agent': USER_AGENT }, validateStatus: (s) => s === 200 || s === 404
-        }));
-        if (esiRes.status === 200 && esiRes.data.inventory_type?.length > 0) {
-            return { success: true, ids: esiRes.data.inventory_type };
-        }
-        return { success: false, ids: [] }; // Not found or empty result
-    } catch (error) {
-        console.error(`[esiSearch - strict=${strict}] Error for "${lowerCaseItemName}": ${error.message}`);
-        return { success: false, error: true }; // Indicate an actual error occurred
-    }
-}
+            // Fuzzwork API returns the TypeID as the response text (not JSON), so it must be parsed as a string first.
+            const typeID = searchRes.data.trim(); // remove leading and trailing whitespace.
+            //  console.log(`[getItemTypeID] TypeID Response (String) for "${itemName}": "${typeID}"`);
 
-async function _fuzzworkSearch(lowerCaseItemName, originalItemName) {
-    // ... (Fuzzwork logic - mostly unchanged, just returns ID or null) ...
-    let cleanItemName = lowerCaseItemName.replace(/[^a-z0-9\s'-]/g, '');
-    if (!cleanItemName) return null;
-    const fuzzUrl = `https://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(cleanItemName)}`;
-    try {
-        const fuzzRes = await limiter.schedule(() => axios.get(fuzzUrl, { headers: { 'User-Agent': USER_AGENT }, transformResponse: [(d) => d], validateStatus: (s) => s >= 200 && s < 500 }));
-        if (fuzzRes.status !== 200) return null;
-        if (typeof fuzzRes.data === 'string') {
-            const potentialID = parseInt(fuzzRes.data.trim(), 10);
-            if (!isNaN(potentialID) && potentialID > 0) return potentialID;
-        }
-        try {
-            const jsonData = JSON.parse(fuzzRes.data);
-             // Prioritize single, direct typeID if present
-             if (jsonData?.typeID && typeof jsonData.typeID === 'number' && !isNaN(jsonData.typeID)) {
-                return jsonData.typeID;
-             }
-             // Handle { typeName: '...', typeID: 123 } object format
-             if(typeof jsonData === 'object' && jsonData !== null && jsonData.typeID && !isNaN(parseInt(jsonData.typeID, 10)) && !Array.isArray(jsonData.typeID)){
-                 return parseInt(jsonData.typeID, 10);
-             }
-            // Handle ambiguous array { typeID: [ { typeName: '...', typeID: 1 }, ... ] } - take first
-             if (Array.isArray(jsonData?.typeID) && jsonData.typeID.length > 0) {
-                const firstResultID = parseInt(jsonData.typeID[0]?.typeID, 10);
-                if (!isNaN(firstResultID) && firstResultID > 0) return firstResultID; // Return first match from Fuzzwork if ambiguous
+            // Check if TypeID is a valid number and return if so,
+            if (!isNaN(typeID) && Number(typeID) > 0) {
+                typeIDCache.set(lowerCaseItemName, Number(typeID));
+                return Number(typeID);
             }
-        } catch { /* Ignore parse error */ }
-        return null; // Return null if parsing fails or format is unexpected
-    } catch (error) {
-        console.error(`[_fuzzworkSearch] Error for "${originalItemName}": ${error.message}`);
-        return null; // Return null on error
-    }
-}
-
-async function _getSuggestions(lowerCaseItemName) {
-    console.log(`[_getSuggestions] Trying suggestions for "${lowerCaseItemName}"`);
-    try {
-        const esiResult = await _esiSearch(lowerCaseItemName, false); // Always fuzzy for suggestions
-        if (esiResult.success && esiResult.ids.length > 0) {
-            const potentialIDs = esiResult.ids.slice(0, 5); // Limit suggestions
-            const idsUrl = `${ESI_BASE_URL}/universe/ids/`;
-            const namesRes = await limiter.schedule(() => axios.post(idsUrl, potentialIDs, {
-                params: { datasource: DATASOURCE, language: 'en-us' },
-                headers: { 'User-Agent': USER_AGENT, 'Content-Type': 'application/json' },
-                validateStatus: (s) => s === 200
-            }));
-            if (namesRes.data?.inventory_types?.length > 0) {
-                return namesRes.data.inventory_types.map(item => item.name);
+            else {
+                console.error(`[getItemTypeID] Invalid TypeID (Not a Number) for "${itemName}": "${typeID}"`);
+                return null;
             }
         }
-    } catch (error) {
-        console.error(`[_getSuggestions] Error fetching suggestions: ${error.message}`);
-    }
-    return []; // Return empty array if no suggestions found or error
-}
-
-// --- Core Logic: Master Type ID Lookup Orchestrator ---
-
-/**
- * Tries ESI (strict, fuzzy) then Fuzzwork to find a TypeID.
- * Handles ambiguity and provides suggestions on failure.
- * Returns { typeID: number } on success,
- *         { ambiguous: true } if ESI fuzzy search yields multiple results,
- *         { error: string, suggestions?: string[] } on definitive failure.
- */
-async function getMasterTypeID(itemName) {
-    const lowerCaseItemName = itemName.toLowerCase().trim();
-    if (!lowerCaseItemName) return { error: "No item name provided." };
-
-    // 1. Check Cache
-    const cachedEntry = typeIDCache.get(lowerCaseItemName);
-    if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_EXPIRY_MS)) {
-        console.log(`[getMasterTypeID] Cache HIT for "${itemName}" -> ${cachedEntry.typeID}`);
-        return { typeID: cachedEntry.typeID };
-    }
-    console.log(`[getMasterTypeID] Cache MISS for "${itemName}". Searching APIs...`);
-
-    // 2. ESI Strict Search
-    let esiStrictResult = await _esiSearch(lowerCaseItemName, true);
-    if (esiStrictResult.success && esiStrictResult.ids.length === 1) {
-        const typeID = esiStrictResult.ids[0];
-        console.log(`[getMasterTypeID] ESI Strict SUCCESS: ${typeID}`);
-        typeIDCache.set(lowerCaseItemName, { typeID: typeID, timestamp: Date.now() });
-        return { typeID: typeID };
-    }
-    if (esiStrictResult.error) { // Handle potential ESI errors early
-         console.log(`[getMasterTypeID] ESI Strict search failed with an error.`);
-         // Optionally try Fuzzwork immediately if ESI fails? Or continue to Fuzzy? Let's try Fuzzy first.
-    }
-
-
-    // 3. ESI Fuzzy Search (if Strict failed or returned multiple/zero)
-    console.log(`[getMasterTypeID] ESI Strict failed or inconclusive. Trying ESI Fuzzy...`);
-    let esiFuzzyResult = await _esiSearch(lowerCaseItemName, false);
-    if (esiFuzzyResult.success) {
-        if (esiFuzzyResult.ids.length === 1) {
-            const typeID = esiFuzzyResult.ids[0];
-            console.log(`[getMasterTypeID] ESI Fuzzy SUCCESS (single result): ${typeID}`);
-            typeIDCache.set(lowerCaseItemName, { typeID: typeID, timestamp: Date.now() });
-            return { typeID: typeID };
-        } else if (esiFuzzyResult.ids.length > 1) {
-            // *** AMBIGUOUS RESULT ***
-            console.log(`[getMasterTypeID] ESI Fuzzy AMBIGUOUS (found ${esiFuzzyResult.ids.length})`);
-            // We could try getting names here, but let's just report ambiguity first.
-             return { ambiguous: true };
-        }
-        // If success but ids.length is 0, means ESI fuzzy found nothing.
-    }
-    if (esiFuzzyResult.error) {
-        console.log(`[getMasterTypeID] ESI Fuzzy search failed with an error.`);
-         // Proceed to Fuzzwork as a last resort if ESI is having issues
-    }
-
-
-    // 4. Fuzzwork Search (if ESI Fuzzy failed or found nothing)
-    console.log(`[getMasterTypeID] ESI Fuzzy failed or no results. Trying Fuzzwork...`);
-    let fuzzworkTypeID = await _fuzzworkSearch(lowerCaseItemName, itemName);
-    if (fuzzworkTypeID) {
-        console.log(`[getMasterTypeID] Fuzzwork SUCCESS: ${fuzzworkTypeID}`);
-        typeIDCache.set(lowerCaseItemName, { typeID: fuzzworkTypeID, timestamp: Date.now() });
-        return { typeID: fuzzworkTypeID };
-    }
-
-    // 5. All Failed - Get Suggestions
-    console.error(`[getMasterTypeID] All lookup methods failed for "${itemName}". Getting suggestions...`);
-    const suggestions = await _getSuggestions(lowerCaseItemName);
-    if (suggestions.length > 0) {
-        return { error: `Could not find "${itemName}".`, suggestions: suggestions };
-    } else {
-        return { error: `Could not find an item matching "${itemName}". Check spelling?` };
-    }
-}
-
-
-// --- Core Logic: Market Data Fetching ---
-
-async function fetchMarketDataFromESI(itemName, typeID, channel) { // Removed retryCount from public call
-    // Internal recursive function for retries
-    async function _fetchWithRetry(retryCount = 0) {
-        if (typeID === PLEX_TYPE_ID) {
-            console.log(`[fetchMarketDataFromESI] Detected PLEX (TypeID: ${typeID}). Not on regional market.`);
-            safeSay(channel, `PLEX prices are handled via the secure NES/PLEX Vault, not the Jita market. Check in-game.`);
-            return { handled: true }; // Indicate PLEX was handled
-        }
-
-        const jitaStations = await getJitaStationIDs();
-        if (!jitaStations) {
-            safeSay(channel, `❌ Error fetching Jita station list. Cannot get market data.`);
-            return { error: true }; // Indicate error
-        }
-        const jitaStationSet = new Set(jitaStations);
-
-        const marketOrdersURL = `${ESI_BASE_URL}/markets/${JITA_REGION_ID}/orders/`;
-        const params = { datasource: DATASOURCE, order_type: 'all', type_id: typeID };
-        console.log(`[fetchMarketDataFromESI] Fetching The Forge orders for "${itemName}" (TypeID: ${typeID})`);
-
-        try {
-            const marketRes = await limiter.schedule(() => axios.get(marketOrdersURL, { params, headers: { 'User-Agent': USER_AGENT }, validateStatus: (s) => s >= 200 && s < 504 }));
-
-            if (marketRes.status === 503) {
-                const retryDelay = Math.pow(2, retryCount) * 1000 + Math.random() * 500;
-                console.error(`[fetchMarketDataFromESI] ESI 503 for "${itemName}". Retrying in ${Math.round(retryDelay / 1000)}s... (Attempt ${retryCount + 1})`);
-                if (retryCount < 3) {
-                    await new Promise(resolve => setTimeout(resolve, retryDelay));
-                    return _fetchWithRetry(retryCount + 1); // Recursive call
-                } else {
-                    safeSay(channel, `❌ ESI market data unavailable for "${itemName}" after retries.`);
-                    return { error: true }; // Indicate error
+        else if (typeof searchRes.data === 'object' && searchRes.data !== null) {
+            // The Fuzzwork API can return an object (if the item name is ambiguous)
+            if (searchRes.data.typeID && Array.isArray(searchRes.data.typeID)) {
+                const typeIDDataArray = searchRes.data.typeID;
+                if (typeIDDataArray.length > 0) {
+                    const firstTypeIDData = typeIDDataArray[0];  // Use the first result.
+                    const typeID = firstTypeIDData.typeID;
+                    //  console.log(`[getItemTypeID] TypeID Response (Object) for "${itemName}": ${typeID}`);
+                    typeIDCache.set(lowerCaseItemName, typeID);
+                    return typeID;
                 }
             }
-            if (marketRes.status !== 200) {
-                safeSay(channel, `❌ Error fetching market orders for "${itemName}": ESI HTTP ${marketRes.status}.`);
-                return { error: true }; // Indicate error
+            else if (searchRes.data.typeID) {
+                const typeID = searchRes.data.typeID;
+                // console.log(`[getItemTypeID] TypeID Response (Object) for "${itemName}": ${typeID}`);
+                typeIDCache.set(lowerCaseItemName, typeID);
+                return typeID;
             }
-
-            const allOrders = marketRes.data;
-            const jitaSystemSellOrders = allOrders.filter(o => !o.is_buy_order && jitaStationSet.has(o.location_id));
-            const jitaSystemBuyOrders = allOrders.filter(o => o.is_buy_order && jitaStationSet.has(o.location_id));
-
-            let lowestSellPrice = jitaSystemSellOrders.reduce((min, o) => (o.price < min ? o.price : min), Infinity);
-            let highestBuyPrice = jitaSystemBuyOrders.reduce((max, o) => (o.price > max ? o.price : max), 0);
-
-            const sellStr = lowestSellPrice !== Infinity ? formatISK(lowestSellPrice) : 'N/A';
-            const buyStr = highestBuyPrice !== 0 ? formatISK(highestBuyPrice) : 'N/A';
-
-            console.log(`[fetchMarketDataFromESI] Result for "${itemName}" (Jita System): Sell: ${sellStr}, Buy: ${buyStr}`);
-            safeSay(channel, `"${itemName}" (Jita System): Sell: ${sellStr} ISK, Buy: ${buyStr} ISK`);
-            return { success: true }; // Indicate success
-
-        } catch (error) {
-            console.error(`[fetchMarketDataFromESI] Error fetching market data for "${itemName}": ${error.message}`);
-            safeSay(channel, `❌ Error fetching market data for "${itemName}".`);
-            return { error: true }; // Indicate error
-        }
-    }
-    // Initial call to the internal retry function
-    return _fetchWithRetry();
-}
-
-
-// --- Twitch Event Listener ---
-
-client.on('message', async (channel, userstate, message, self) => {
-    if (self) return;
-
-    const commandArgs = message.trim().split(/\s+/);
-    const command = commandArgs[0]?.toLowerCase();
-
-    // --- Unified Item Lookup Logic ---
-    async function handleItemCommand(itemName, action) {
-        if (!itemName) {
-            safeSay(channel, `Usage: ${command} <item name>`); return;
-        }
-        try {
-            const result = await getMasterTypeID(itemName); // Use the master lookup
-
-            if (result.typeID) {
-                if (action === 'market') {
-                    await fetchMarketDataFromESI(itemName, result.typeID, channel);
-                } else if (action === 'info') {
-                    const eveRefUrl = `https://everef.net/type/${result.typeID}`;
-                    safeSay(channel, `"${itemName}" Info [TypeID: ${result.typeID}]: ${eveRefUrl}`);
-                }
-            } else if (result.ambiguous) {
-                safeSay(channel, `❌ Found multiple possible matches for "${itemName}". Please be more specific.`);
-            } else if (result.error) {
-                let errorMsg = result.error;
-                if (result.suggestions && result.suggestions.length > 0) {
-                    errorMsg += ` Did you mean: ${result.suggestions.join(', ')}?`;
-                }
-                safeSay(channel, `❌ ${errorMsg}`);
+            else {
+                console.error(`[getItemTypeID] Unexpected object structure, no typeID found for "${itemName}".  Response was: ${JSON.stringify(searchRes.data)}`);
+                return null;
             }
-        } catch (error) {
-            console.error(`[Twitch] Unexpected error processing ${command} for "${itemName}": ${error}`);
-            safeSay(channel, `❌ Unexpected error processing command for "${itemName}".`);
+        }
+        else {
+            console.error(`[getItemTypeID] Unexpected response type for "${itemName}".  Response was: ${JSON.stringify(searchRes.data)}`);
+            return null;
         }
     }
-
-    // --- Command Routing ---
-    if (command === '!market') {
-        const itemName = commandArgs.slice(1).join(' ');
-        console.log(`[Twitch] !market command in ${channel} for: "${itemName}"`);
-        await handleItemCommand(itemName, 'market');
-    }
-    else if (command === '!info') {
-        const itemName = commandArgs.slice(1).join(' ');
-        console.log(`[Twitch] !info command in ${channel} for: "${itemName}"`);
-        await handleItemCommand(itemName, 'info');
-    }
-    else if (command === '!combat') {
-        // ... (combat command logic remains unchanged) ...
-        const siteName = commandArgs.slice(1).join(' ').toLowerCase();
-        console.log(`[Twitch] !combat command in ${channel} for: "${siteName}"`);
-        if (!siteName) { safeSay(channel, 'Usage: !combat <combat site name>'); return; }
-        const siteData = combatSites[siteName];
-        if (siteData) {
-            safeSay(channel, `"${siteName}" Info: ${siteData.url} | Difficulty: ${siteData.difficulty} | Faction: ${siteData.foundIn} | Tier: ${siteData.tier}`);
+    catch (error) {
+        if (axios.isAxiosError(error)) {
+            console.error(`[getItemTypeID] Axios error fetching TypeID for "${itemName}": ${error.message},  Response: ${JSON.stringify(error.response?.data)}`);
+            return null; // Return null on error
         } else {
-            const possibleMatches = Object.keys(combatSites).filter(key => key.includes(siteName)).slice(0, 3);
-            let response = `❌ Combat site "${siteName}" not found.`;
-            if (possibleMatches.length > 0) response += ` Did you mean: ${possibleMatches.join(', ')}?`;
-            safeSay(channel, response);
+            console.error(`[getItemTypeID] Error fetching TypeID for "${itemName}": ${error.message}`);
+            return null; // Return null on error
         }
     }
+}
+
+
+// Start the Express server
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+    console.log(`Server is running on port ${port}`);
 });
 
-// --- Express Server & Health Check ---
-// ... (Express server, health check, and graceful shutdown remain unchanged) ...
+// Respond to root URL
 app.get('/', (req, res) => {
-    const twitchConnected = client.readyState() === "OPEN";
-    const status = twitchConnected ? 200 : 503;
-    const message = twitchConnected ? 'Eve Twitch Market Bot running: Twitch Connected.' : 'Eve Twitch Market Bot running: Twitch DISCONNECTED.';
-    console.log(`[Health Check] Status: ${status}, Twitch Connected: ${twitchConnected}`);
-    res.status(status).send(message);
-});
-
-const port = process.env.PORT || 8080;
-const server = app.listen(port, () => console.log(`Server listening on port ${port}`));
-
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received: closing Twitch client and HTTP server...');
-  client.disconnect()
-    .catch(err => console.error('Error disconnecting Twitch:', err))
-    .finally(() => {
-        console.log('Twitch client disconnected (or failed).');
-        server.close((err) => {
-            if (err) {
-                console.error('Error closing HTTP server:', err); process.exit(1);
-            } else {
-                console.log('HTTP server closed.'); process.exit(0);
-            }
-        });
-    });
-    setTimeout(() => { console.error('Graceful shutdown timeout, forcing exit.'); process.exit(1); }, 10000);
+    res.send('Eve Twitch Market Bot is running.');
 });
