@@ -241,10 +241,14 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
         console.log(`[fetchMarketDataFromESI] Start ESI Call: Fetching for ${itemName} (TypeID: ${typeID}), received channel: ${channel}, Retry: ${retryCount}`);
 
         const isPlex = (typeID === PLEX_TYPE_ID);
+        console.log(`[fetchMarketDataFromESI] isPlex: ${isPlex} (TypeID: ${typeID}, PLEX_TYPE_ID: ${PLEX_TYPE_ID})`); // Added log
         const regionId = JITA_REGION_ID; // ESI still requires a region ID even for global PLEX market, Jita's region is commonly used.
 
         const sellOrdersURL = `https://esi.evetech.net/latest/markets/${regionId}/orders/?datasource=tranquility&order_type=sell&type_id=${typeID}`;
         const buyOrdersURL = `https://esi.evetech.net/latest/markets/${regionId}/orders/?datasource=tranquility&order_type=buy&type_id=${typeID}`;
+
+        console.log(`[fetchMarketDataFromESI] Sell Orders URL: ${sellOrdersURL}`); // Added log
+        console.log(`[fetchMarketDataFromESI] Buy Orders URL: ${buyOrdersURL}`);   // Added log
 
         const [sellOrdersRes, buyOrdersRes] = await Promise.all([
             apiLimiter.schedule(() => axios.get(sellOrdersURL, {
@@ -260,6 +264,8 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
         ]);
 
         console.log(`[fetchMarketDataFromESI] ESI Response Status - Sell: ${sellOrdersRes.status}, Buy: ${buyOrdersRes.status} for ${itemName}`);
+        console.log(`[fetchMarketDataFromESI] Raw Sell Orders Data (first 500 chars): ${JSON.stringify(sellOrdersRes.data).substring(0, 500)}`); // Added log
+        console.log(`[fetchMarketDataFromESI] Raw Buy Orders Data (first 500 chars): ${JSON.stringify(buyOrdersRes.data).substring(0, 500)}`);   // Added log
 
         if (sellOrdersRes.status !== 200) {
             console.error(`[fetchMarketDataFromESI] Error fetching sell orders. HTTP Status: ${sellOrdersRes.status}, Response: ${JSON.stringify(sellOrdersRes.data)}`);
@@ -275,6 +281,8 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
 
         const sellOrders = sellOrdersRes.data;
         const buyOrders = buyOrdersRes.data;
+
+        console.log(`[fetchMarketDataFromESI] Sell Orders Count: ${sellOrders.length}, Buy Orders Count: ${buyOrders.length} for ${itemName}`); // Added log
 
         let lowestSellOrder = null;
         let highestBuyOrder = null;
@@ -359,7 +367,9 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
 client.on('message', (channel, userstate, message, self) => {
     // **** START OF MESSAGE HANDLER ****
     if (self) return; // Ignore messages from the bot itself
-    console.log(`--------\n[client.on('message')] START | Channel: ${channel} | User: ${userstate.username} | State: ${client.readyState()} | Message: "${message}"\n--------`);
+    // Truncate message for logging to avoid excessive console output
+    const truncatedMessage = message.length > 100 ? message.substring(0, 100) + '...' : message;
+    console.log(`--------\n[client.on('message')] START | Channel: ${channel} | User: ${userstate.username} | State: ${client.readyState()} | Message: "${truncatedMessage}"\n--------`);
 
     const args = message.trim().split(/\s+/);
     const commandName = (args.shift() || '').toLowerCase();
@@ -460,6 +470,9 @@ async function getItemTypeID(itemName) {
                 timeout: 5000
             });
         });
+
+        console.log(`[getItemTypeID] Fuzzwork API Response Status for "${itemName}": ${searchRes.status}`); // Added log
+        console.log(`[getItemTypeID] Raw Fuzzwork Data for "${itemName}": ${JSON.stringify(searchRes.data)}`); // Added log
 
         if (searchRes.status !== 200) {
             console.error(`[getItemTypeID] Fuzzwork API Error for "${itemName}": HTTP ${searchRes.status}. Response: ${JSON.stringify(searchRes.data)}`);
