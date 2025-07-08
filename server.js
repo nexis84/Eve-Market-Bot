@@ -40,9 +40,10 @@ const USER_AGENT = process.env.USER_AGENT || 'EveTwitchMarketBot/1.1.0 (Contact:
 // Cache for Type IDs
 const typeIDCache = new Map();
 
-const JITA_SYSTEM_ID = 30000142; // Jita system ID
-const JITA_REGION_ID = 10000002; // The Forge Region ID
-const PLEX_TYPE_ID = 44992; // Corrected Type ID for PLEX (Pilot's License Extension)
+const JITA_SYSTEM_ID = 30000142; // Jita system ID (still used for non-PLEX items)
+const JITA_REGION_ID = 10000002; // The Forge Region ID (still used for non-PLEX items)
+const PLEX_TYPE_ID = 44992; // Correct Type ID for PLEX (Pilot's License Extension)
+const GLOBAL_PLEX_REGION_ID = 19000001; // New Global PLEX Market Region ID
 
 // Removed combat site data as requested.
 // const combatSites = { ... };
@@ -115,10 +116,12 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
 
         const isPlex = (typeID === PLEX_TYPE_ID);
         console.log(`[fetchMarketDataFromESI] isPlex: ${isPlex} (TypeID: ${typeID}, PLEX_TYPE_ID: ${PLEX_TYPE_ID})`); // Added log
-        const regionId = JITA_REGION_ID; // ESI still requires a region ID even for global PLEX market, Jita's region is commonly used.
 
-        const sellOrdersURL = `https://esi.evetech.net/latest/markets/${regionId}/orders/?datasource=tranquility&order_type=sell&type_id=${typeID}`;
-        const buyOrdersURL = `https://esi.evetech.net/latest/markets/${regionId}/orders/?datasource=tranquility&order_type=buy&type_id=${typeID}`;
+        // Determine which region ID to use based on whether it's PLEX or another item
+        const targetRegionId = isPlex ? GLOBAL_PLEX_REGION_ID : JITA_REGION_ID;
+
+        const sellOrdersURL = `https://esi.evetech.net/latest/markets/${targetRegionId}/orders/?datasource=tranquility&order_type=sell&type_id=${typeID}`;
+        const buyOrdersURL = `https://esi.evetech.net/latest/markets/${targetRegionId}/orders/?datasource=tranquility&order_type=buy&type_id=${typeID}`;
 
         console.log(`[fetchMarketDataFromESI] Sell Orders URL: ${sellOrdersURL}`); // Added log
         console.log(`[fetchMarketDataFromESI] Buy Orders URL: ${buyOrdersURL}`);   // Added log
@@ -249,10 +252,10 @@ client.on('message', (channel, userstate, message, self) => {
     // !market command
     if (commandName === '!market') {
         const itemName = args.join(' ');
-        console.log(`[client.on('message')] !market command received in ${channel}. Item Name: "${itemName}"`);
+        // Removed console.log for item name here to stop chat content in logs
         if (!itemName) {
             safeSay(channel, '❌ Please specify an item name. Usage: !market <item name> ❌');
-            console.log('[client.on(\'message\')] Empty Item Name for !market');
+            console.log('[client.on(\'message\')] Empty Item Name for !market'); // This log is fine as it's an internal state
             return;
         }
 
@@ -291,7 +294,7 @@ client.on('message', (channel, userstate, message, self) => {
     // !info command
     else if (commandName === '!info') {
         const itemName = args.join(' ');
-        console.log(`[client.on('message')] !info command received in ${channel}. Item Name: "${itemName}"`);
+        // Removed console.log for item name here to stop chat content in logs
         if (!itemName) {
             safeSay(channel, '❌ Please specify an item name. Usage: !info <item name> ❌');
             return;
@@ -315,7 +318,7 @@ client.on('message', (channel, userstate, message, self) => {
     else if (commandName === '!ping') {
         const state = client.readyState();
         const reply = `Pong! Bot is running. Twitch connection state: ${state}. Responding in channel: ${channel}.`;
-        console.log(`[client.on('message')] Responding to !ping in ${channel} with state ${state}`);
+        console.log(`[client.on('message')] Responding to !ping in ${channel} with state ${state}`); // This log is fine as it's about the bot's response/state
         safeSay(channel, reply);
     }
     // **** END OF MESSAGE HANDLER ****
