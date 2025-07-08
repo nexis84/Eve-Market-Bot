@@ -26,7 +26,7 @@ if (!process.env.TWITCH_OAUTH_TOKEN) {
 
 // Twitch Bot Configuration
 const client = new tmi.Client({
-    options: { debug: true }, // <-- *** ENABLED TMI.JS DEBUG LOGGING ***
+    options: { debug: true }, // <--- ENABLED TMI.JS DEBUG LOGGING --->
     identity: {
         username: 'Eve_twitch_market_bot',
         password: process.env.TWITCH_OAUTH_TOKEN // Ensure this includes 'chat:read' and 'chat:edit' scopes
@@ -42,10 +42,10 @@ const typeIDCache = new Map();
 
 const JITA_SYSTEM_ID = 30000142; // Jita system ID
 const JITA_REGION_ID = 10000002; // The Forge Region ID
+const PLEX_TYPE_ID = 44992; // Corrected Type ID for PLEX (Pilot's License Extension)
 
-// Combat site data (Data remains the same as original)
+// Combat site data
 const combatSites = {
-    // ... (combat site data omitted for brevity) ...
     "angel hideaway": { url: "https://wiki.eveuniversity.org/Angel_Hideaway", difficulty: "4/10", foundIn: "Angel Cartel", tier: "Low" },
     "blood hideaway": { url: "https://wiki.eveuniversity.org/Blood_Raider_Hideaway", difficulty: "None", foundIn: "Blood Raiders", tier: "Low" },
     "guristas hideaway": { url: "https://wiki.eveuniversity.org/Guristas_Hideaway", difficulty: "4/10", foundIn: "Guristas Pirates", tier: "Low" },
@@ -126,7 +126,7 @@ const combatSites = {
     "blood forlorn rally point": { url: "https://wiki.eveuniversity.org/Blood_Forlorn_Rally_Point", difficulty: "8/10", foundIn: "Blood Raiders", tier: "High" },
     "guristas forlorn rally point": { url: "https://wiki.eveuniversity.org/Guristas_Forlorn_Rally_Point", difficulty: "8/10", foundIn: "Guristas Pirates", tier: "High" },
     "sansha forlorn rally point": { url: "https://wiki.eveuniversity.org/Sansha_Forlorn_Rally_Point", difficulty: "8/10", foundIn: "Sansha's Nation", tier: "High" },
-    "serpentis forlorn rally point": { url: "https://wiki.eveuniversity.org/Serpentis_Forlorn_Rally_Point", difficulty: "8/10", foundIn: "Serpentis Corporation", tier: "High" },
+    "serpentis forlorn rally point": { url: "https://wiki.eveuniversity.org/Serpentis_Forlorn_Rally_Point", difficulty: "None", foundIn: "Serpentis Corporation", tier: "High" },
     "angel port": { url: "https://wiki.eveuniversity.org/Angel_Port", difficulty: "7/10", foundIn: "Angel Cartel", tier: "Mid" },
     "blood port": { url: "https://wiki.eveuniversity.org/Blood_Port", difficulty: "7/10", foundIn: "Blood Raiders", tier: "Mid" },
     "guristas port": { url: "https://wiki.eveuniversity.org/Guristas_Port", difficulty: "7/10", foundIn: "Guristas Pirates", tier: "Mid" },
@@ -174,8 +174,8 @@ const combatSites = {
     "teeming drone horde": { url: "https://wiki.eveuniversity.org/Teeming_Drone_Horde", difficulty: "?", foundIn: "Rogue Drones", tier: "High" },
 };
 
-
 // --- TMI Event Listeners ---
+
 client.on('connected', (addr, port) => {
     console.log(`* Connected to Twitch chat (${addr}:${port}). State: ${client.readyState()}`);
     // Send a test message to the first channel on connection using the chat limiter
@@ -197,8 +197,8 @@ client.on('disconnected', (reason) => {
 client.on('error', (err) => {
     console.error('>>>>>> Twitch client library error:', err);
 });
-// --- End TMI Event Listeners ---
 
+// --- End TMI Event Listeners ---
 
 // Connect the Twitch bot to the chat
 client.connect()
@@ -209,7 +209,6 @@ client.connect()
         console.error(">>>>>> Twitch client failed to connect:", error);
         process.exit(1);
     });
-
 
 // Function to safely send messages using the chat limiter
 async function safeSay(channel, message) {
@@ -231,20 +230,21 @@ async function fetchMarketData(itemName, typeID, channel, retryCount = 0) {
         console.log(`[fetchMarketData] Start: Fetching market data for ${itemName} (TypeID: ${typeID}), received channel: ${channel}, Retry: ${retryCount}`);
         await fetchMarketDataFromESI(itemName, typeID, channel, retryCount);
         console.log(`[fetchMarketData] End: Completed fetch attempt for ${itemName} (TypeID: ${typeID})`);
-
     } catch (error) {
         console.error(`[fetchMarketData] General Error caught for "${itemName}": ${error.message}, Retry: ${retryCount}`);
         await safeSay(channel, `❌ Error fetching data for "${itemName}": ${error.message} ❌`);
     }
 }
 
-
 async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0) {
     try {
         console.log(`[fetchMarketDataFromESI] Start ESI Call: Fetching for ${itemName} (TypeID: ${typeID}), received channel: ${channel}, Retry: ${retryCount}`);
 
-        const sellOrdersURL = `https://esi.evetech.net/latest/markets/${JITA_REGION_ID}/orders/?datasource=tranquility&order_type=sell&type_id=${typeID}`;
-        const buyOrdersURL = `https://esi.evetech.net/latest/markets/${JITA_REGION_ID}/orders/?datasource=tranquility&order_type=buy&type_id=${typeID}`;
+        const isPlex = (typeID === PLEX_TYPE_ID);
+        const regionId = JITA_REGION_ID; // ESI still requires a region ID even for global PLEX market, Jita's region is commonly used.
+
+        const sellOrdersURL = `https://esi.evetech.net/latest/markets/${regionId}/orders/?datasource=tranquility&order_type=sell&type_id=${typeID}`;
+        const buyOrdersURL = `https://esi.evetech.net/latest/markets/${regionId}/orders/?datasource=tranquility&order_type=buy&type_id=${typeID}`;
 
         const [sellOrdersRes, buyOrdersRes] = await Promise.all([
             apiLimiter.schedule(() => axios.get(sellOrdersURL, {
@@ -266,53 +266,63 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
             await safeSay(channel, `❌ Error fetching sell orders for "${itemName}": HTTP ${sellOrdersRes.status}. ❌`);
             return;
         }
+
         if (buyOrdersRes.status !== 200) {
             console.error(`[fetchMarketDataFromESI] Error fetching buy orders. HTTP Status: ${buyOrdersRes.status}, Response: ${JSON.stringify(buyOrdersRes.data)}`);
             await safeSay(channel, `❌ Error fetching buy orders for "${itemName}": HTTP ${buyOrdersRes.status}. ❌`);
             return;
         }
+
         const sellOrders = sellOrdersRes.data;
         const buyOrders = buyOrdersRes.data;
 
-        if (!sellOrders || sellOrders.length === 0) {
-            console.warn(`[fetchMarketDataFromESI] No sell orders found for "${itemName}" (TypeID: ${typeID}) in Region ${JITA_REGION_ID}`);
-            await safeSay(channel, `❌ No sell orders for "${itemName}" in Jita region. ❌`);
-            return;
+        let lowestSellOrder = null;
+        let highestBuyOrder = null;
+
+        if (isPlex) {
+            // For PLEX, orders are global, so no need to filter by system_id
+            lowestSellOrder = sellOrders.length > 0
+                ? sellOrders.reduce((min, order) => (order.price < min.price ? order : min), sellOrders[0])
+                : null;
+            highestBuyOrder = buyOrders.length > 0
+                ? buyOrders.reduce((max, order) => (order.price > max.price ? order : max), buyOrders[0])
+                : null;
+        } else {
+            // For other items, filter by Jita system ID
+            const jitaSellOrders = sellOrders.filter(order => order.system_id === JITA_SYSTEM_ID);
+            lowestSellOrder = jitaSellOrders.length > 0
+                ? jitaSellOrders.reduce((min, order) => (order.price < min.price ? order : min), jitaSellOrders[0])
+                : null;
+
+            const jitaBuyOrders = buyOrders.filter(order => order.system_id === JITA_SYSTEM_ID);
+            highestBuyOrder = jitaBuyOrders.length > 0
+                ? jitaBuyOrders.reduce((max, order) => (order.price > max.price ? order : max), jitaBuyOrders[0])
+                : null;
         }
-
-        if (!buyOrders || buyOrders.length === 0) {
-            console.warn(`[fetchMarketDataFromESI] No buy orders found for "${itemName}" (TypeID: ${typeID}) in Region ${JITA_REGION_ID}`);
-            await safeSay(channel, `❌ No buy orders for "${itemName}" in Jita region. ❌`);
-            return;
-        }
-
-        const jitaSellOrders = sellOrders.filter(order => order.system_id === JITA_SYSTEM_ID);
-        const lowestSellOrder = jitaSellOrders.length > 0
-            ? jitaSellOrders.reduce((min, order) => (order.price < min.price ? order : min), jitaSellOrders[0])
-            : null;
-
-         const jitaBuyOrders = buyOrders.filter(order => order.system_id === JITA_SYSTEM_ID);
-        const highestBuyOrder = jitaBuyOrders.length > 0
-            ? jitaBuyOrders.reduce((max, order) => (order.price > max.price ? order : max), jitaBuyOrders[0])
-            : null;
 
         let message = `${itemName} - `;
+
         if (lowestSellOrder) {
-             const sellPrice = parseFloat(lowestSellOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-             message += `Jita Sell: ${sellPrice} ISK`;
-             console.log(`[fetchMarketDataFromESI] Calculated Jita Sell Price: ${sellPrice} for ${itemName}`);
+            const sellPrice = parseFloat(lowestSellOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            message += `${isPlex ? 'Global Sell' : 'Jita Sell'}: ${sellPrice} ISK`;
+            console.log(`[fetchMarketDataFromESI] Calculated ${isPlex ? 'Global Sell' : 'Jita Sell'} Price: ${sellPrice} for ${itemName}`);
         } else {
-            message += `Jita Sell: (None in station)`;
-            console.log(`[fetchMarketDataFromESI] No Jita station sell orders for ${itemName}`);
+            message += `${isPlex ? 'Global Sell' : 'Jita Sell'}: (None)`;
+            console.log(`[fetchMarketDataFromESI] No ${isPlex ? 'global' : 'Jita station'} sell orders for ${itemName}`);
         }
 
         if (highestBuyOrder) {
             const buyPrice = parseFloat(highestBuyOrder.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            message += `, Jita Buy: ${buyPrice} ISK`;
-             console.log(`[fetchMarketDataFromESI] Calculated Jita Buy Price: ${buyPrice} for ${itemName}`);
+            message += `, ${isPlex ? 'Global Buy' : 'Jita Buy'}: ${buyPrice} ISK`;
+            console.log(`[fetchMarketDataFromESI] Calculated ${isPlex ? 'Global Buy' : 'Jita Buy'} Price: ${buyPrice} for ${itemName}`);
         } else {
-             message += `, Jita Buy: (None in station)`;
-             console.log(`[fetchMarketDataFromESI] No Jita station buy orders for ${itemName}`);
+            message += `, ${isPlex ? 'Global Buy' : 'Jita Buy'}: (None)`;
+            console.log(`[fetchMarketDataFromESI] No ${isPlex ? 'global' : 'Jita station'} buy orders for ${itemName}`);
+        }
+
+        if (!lowestSellOrder && !highestBuyOrder) {
+            await safeSay(channel, `❌ No market data found for "${itemName}" in ${isPlex ? 'the global market' : 'Jita region'}. ❌`);
+            return;
         }
 
         await safeSay(channel, message);
@@ -327,8 +337,8 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
                     await new Promise(resolve => setTimeout(resolve, retryDelay));
                     return await fetchMarketDataFromESI(itemName, typeID, channel, retryCount + 1);
                 } else if (error.response.status === 503) {
-                     console.error(`[fetchMarketDataFromESI] ESI Unavailable (503) for "${itemName}" after multiple retries.`);
-                     await safeSay(channel, `❌ ESI Temporarily Unavailable for "${itemName}". Please try again later. ❌`);
+                    console.error(`[fetchMarketDataFromESI] ESI Unavailable (503) for "${itemName}" after multiple retries.`);
+                    await safeSay(channel, `❌ ESI Temporarily Unavailable for "${itemName}". Please try again later. ❌`);
                 } else {
                     console.error(`[fetchMarketDataFromESI] ESI HTTP Error for "${itemName}". Status: ${error.response.status}, Response: ${JSON.stringify(error.response.data)}`);
                     await safeSay(channel, `❌ Error fetching market data for "${itemName}": ESI Error ${error.response.status}. ❌`);
@@ -345,12 +355,10 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, retryCount = 0)
     }
 }
 
-
 // Function to handle commands from Twitch chat
 client.on('message', (channel, userstate, message, self) => {
     // **** START OF MESSAGE HANDLER ****
     if (self) return; // Ignore messages from the bot itself
-
     console.log(`--------\n[client.on('message')] START | Channel: ${channel} | User: ${userstate.username} | State: ${client.readyState()} | Message: "${message}"\n--------`);
 
     const args = message.trim().split(/\s+/);
@@ -360,12 +368,11 @@ client.on('message', (channel, userstate, message, self) => {
     if (commandName === '!market') {
         const itemName = args.join(' ');
         console.log(`[client.on('message')] !market command received in ${channel}. Item Name: "${itemName}"`);
-
         if (!itemName) {
-             safeSay(channel, '❌ Please specify an item name. Usage: !market <item name> ❌');
-             console.log('[client.on(\'message\')] Empty Item Name for !market');
-             return;
-         }
+            safeSay(channel, '❌ Please specify an item name. Usage: !market <item name> ❌');
+            console.log('[client.on(\'message\')] Empty Item Name for !market');
+            return;
+        }
 
         getItemTypeID(itemName)
             .then(typeID => {
@@ -382,17 +389,14 @@ client.on('message', (channel, userstate, message, self) => {
                 safeSay(channel, `❌ Error looking up item "${itemName}": ${error.message} ❌`);
             });
     }
-
     // !combat command
     else if (commandName === '!combat') {
         const siteName = args.join(' ').toLowerCase();
         console.log(`[client.on('message')] !combat command received in ${channel}. Site Name: "${siteName}"`);
-
         if (!siteName) {
             safeSay(channel, '❌ Please specify a combat site name. Usage: !combat <site name> ❌');
             return;
         }
-
         if (combatSites.hasOwnProperty(siteName)) {
             const siteData = combatSites[siteName];
             safeSay(channel, `${siteName} | Faction: ${siteData.foundIn} | Difficulty: ${siteData.difficulty} | Tier: ${siteData.tier} | Info: ${siteData.url}`);
@@ -400,20 +404,17 @@ client.on('message', (channel, userstate, message, self) => {
             safeSay(channel, `❌ Combat site "${siteName}" not found in the list. Check spelling or request it to be added. ❌`);
         }
     }
-
     // !info command
     else if (commandName === '!info') {
         const itemName = args.join(' ');
         console.log(`[client.on('message')] !info command received in ${channel}. Item Name: "${itemName}"`);
-
         if (!itemName) {
             safeSay(channel, '❌ Please specify an item name. Usage: !info <item name> ❌');
             return;
         }
-
         getItemTypeID(itemName)
             .then(typeID => {
-                 console.log(`[client.on('message')] TypeID result for !info "${itemName}": ${typeID}. Preparing reply for channel: ${channel}`);
+                console.log(`[client.on('message')] TypeID result for !info "${itemName}": ${typeID}. Preparing reply for channel: ${channel}`);
                 if (typeID) {
                     const eveRefUrl = `https://everef.net/type/${typeID}`;
                     safeSay(channel, `${itemName} info: ${eveRefUrl}`);
@@ -426,7 +427,6 @@ client.on('message', (channel, userstate, message, self) => {
                 safeSay(channel, `❌ Error looking up item "${itemName}": ${error.message} ❌`);
             });
     }
-
     // !ping command
     else if (commandName === '!ping') {
         const state = client.readyState();
@@ -434,10 +434,8 @@ client.on('message', (channel, userstate, message, self) => {
         console.log(`[client.on('message')] Responding to !ping in ${channel} with state ${state}`);
         safeSay(channel, reply);
     }
-
     // **** END OF MESSAGE HANDLER ****
 });
-
 
 // Function to get the TypeID of an item based on its name (using Fuzzwork API)
 async function getItemTypeID(itemName) {
@@ -446,20 +444,20 @@ async function getItemTypeID(itemName) {
         console.log(`[getItemTypeID] Cache HIT for "${itemName}"`);
         return typeIDCache.get(lowerCaseItemName);
     }
-    console.log(`[getItemTypeID] Cache MISS for "${itemName}". Fetching from Fuzzwork...`);
 
+    console.log(`[getItemTypeID] Cache MISS for "${itemName}". Fetching from Fuzzwork...`);
     try {
         let cleanItemName = itemName.replace(/[^a-zA-Z0-9\s'-]/g, '').trim();
         if (!cleanItemName) {
-             console.error(`[getItemTypeID] Cleaned item name is empty for original: "${itemName}"`);
-             return null;
+            console.error(`[getItemTypeID] Cleaned item name is empty for original: "${itemName}"`);
+            return null;
         }
 
         const searchRes = await apiLimiter.schedule(() => {
             console.log(`[getItemTypeID] Axios Call to Fuzzwork API for TypeID: "${cleanItemName}"`);
             return axios.get(`https://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(cleanItemName)}`, {
                 headers: { 'User-Agent': USER_AGENT },
-                 timeout: 5000
+                timeout: 5000
             });
         });
 
@@ -473,51 +471,49 @@ async function getItemTypeID(itemName) {
         if (typeof responseData === 'string') {
             const typeIDString = responseData.trim();
             if (typeIDString && !isNaN(typeIDString) && typeIDString !== '[]') {
-                 const typeID = Number(typeIDString);
-                 console.log(`[getItemTypeID] Fuzzwork Success (String): Found TypeID ${typeID} for "${itemName}"`);
-                 typeIDCache.set(lowerCaseItemName, typeID);
-                 return typeID;
+                const typeID = Number(typeIDString);
+                console.log(`[getItemTypeID] Fuzzwork Success (String): Found TypeID ${typeID} for "${itemName}"`);
+                typeIDCache.set(lowerCaseItemName, typeID);
+                return typeID;
             } else {
-                 console.log(`[getItemTypeID] Fuzzwork Info (String): No exact match or invalid ID for "${itemName}". Response: "${typeIDString}"`);
-                 return null;
+                console.log(`[getItemTypeID] Fuzzwork Info (String): No exact match or invalid ID for "${itemName}". Response: "${typeIDString}"`);
+                return null;
             }
         } else if (typeof responseData === 'object' && responseData !== null) {
             let foundTypeID = null;
-             if (Array.isArray(responseData.typeID) && responseData.typeID.length > 0) {
-                 const exactMatch = responseData.typeID.find(item => item.typeName.toLowerCase() === lowerCaseItemName);
-                 foundTypeID = exactMatch ? exactMatch.typeID : responseData.typeID[0].typeID;
-                 const foundName = exactMatch ? exactMatch.typeName : responseData.typeID[0].typeName;
-                 console.log(`[getItemTypeID] Fuzzwork Success (Array): Found ambiguous match for "${itemName}", using ID ${foundTypeID} (${foundName})`);
-             } else if (responseData.typeID && !isNaN(responseData.typeID)) {
+            if (Array.isArray(responseData.typeID) && responseData.typeID.length > 0) {
+                const exactMatch = responseData.typeID.find(item => item.typeName.toLowerCase() === lowerCaseItemName);
+                foundTypeID = exactMatch ? exactMatch.typeID : responseData.typeID[0].typeID;
+                const foundName = exactMatch ? exactMatch.typeName : responseData.typeID[0].typeName;
+                console.log(`[getItemTypeID] Fuzzwork Success (Array): Found ambiguous match for "${itemName}", using ID ${foundTypeID} (${foundName})`);
+            } else if (responseData.typeID && !isNaN(responseData.typeID)) {
                 foundTypeID = Number(responseData.typeID);
                 console.log(`[getItemTypeID] Fuzzwork Success (Object): Found TypeID ${foundTypeID} for "${itemName}"`);
-             } else if (Array.isArray(responseData) && responseData.length === 0) {
-                 console.log(`[getItemTypeID] Fuzzwork Info (Empty Array): No match found for "${itemName}".`);
-                 return null;
-             }
+            } else if (Array.isArray(responseData) && responseData.length === 0) {
+                console.log(`[getItemTypeID] Fuzzwork Info (Empty Array): No match found for "${itemName}".`);
+                return null;
+            }
 
             if (foundTypeID) {
                 typeIDCache.set(lowerCaseItemName, foundTypeID);
                 return foundTypeID;
             } else {
-                 console.warn(`[getItemTypeID] Fuzzwork Warning: Unexpected object structure or no TypeID found for "${itemName}". Response: ${JSON.stringify(responseData)}`);
-                 return null;
+                console.warn(`[getItemTypeID] Fuzzwork Warning: Unexpected object structure or no TypeID found for "${itemName}". Response: ${JSON.stringify(responseData)}`);
+                return null;
             }
         } else {
-             console.warn(`[getItemTypeID] Fuzzwork Warning: Unexpected response type for "${itemName}". Response: ${JSON.stringify(responseData)}`);
+            console.warn(`[getItemTypeID] Fuzzwork Warning: Unexpected response type for "${itemName}". Response: ${JSON.stringify(responseData)}`);
             return null;
         }
-
     } catch (error) {
         if (axios.isAxiosError(error)) {
-             console.error(`[getItemTypeID] Axios error fetching TypeID from Fuzzwork for "${itemName}": ${error.message}`, error.code === 'ECONNABORTED' ? '(Timeout)' : `Status: ${error.response?.status}`);
+            console.error(`[getItemTypeID] Axios error fetching TypeID from Fuzzwork for "${itemName}": ${error.message}`, error.code === 'ECONNABORTED' ? '(Timeout)' : `Status: ${error.response?.status}`);
         } else {
             console.error(`[getItemTypeID] General error fetching TypeID from Fuzzwork for "${itemName}": ${error.message}`);
         }
         return null;
     }
 }
-
 
 // Start the Express server for Cloud Run health checks etc.
 const port = process.env.PORT || 8080;
@@ -541,6 +537,5 @@ app.get('/_health', (req, res) => {
         res.status(503).send(`Service Unavailable: Twitch client not connected (State: ${clientState})`);
     }
 });
-
 
 console.log("Eve Twitch Market Bot script finished loading. Waiting for connection and messages...");
