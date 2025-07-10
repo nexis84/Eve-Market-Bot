@@ -35,11 +35,11 @@ const client = new tmi.Client({
 });
 
 // Set a default User Agent if one is not set in the environment variables.
-const USER_AGENT = process.env.USER_AGENT || 'EveTwitchMarketBot/1.3.0 (Contact: YourEmailOrDiscord)'; // Customize this
+const USER_AGENT = process.env.USER_AGENT || 'EveTwitchMarketBot/1.4.0 (Contact: YourEmailOrDiscord)'; // Customize this
 
 // Caches
 const typeIDCache = new Map();
-const blueprintCache = new Map(); // Cache for EveRef blueprint data
+const manufacturingCache = new Map(); // Cache for product manufacturing data
 
 const JITA_SYSTEM_ID = 30000142; // Jita system ID
 const JITA_REGION_ID = 10000002; // The Forge Region ID
@@ -100,7 +100,6 @@ client.on('disconnected', (reason) => console.error(`Twitch client disconnected:
 client.on('error', (err) => console.error('>>>>>> Twitch client library error:', err));
 // --- End TMI Event Listeners ---
 
-// Load Type IDs before connecting the client
 loadEveFilesTypeIDs().then(() => {
     client.connect()
         .then(() => console.log("Twitch client connection initiated."))
@@ -110,7 +109,6 @@ loadEveFilesTypeIDs().then(() => {
         });
 });
 
-// Function to safely send messages using the chat limiter
 async function safeSay(channel, message) {
     return chatLimiter.schedule(() => {
         console.log(`[safeSay] Attempting to send to ${channel}: "${message.substring(0, 50)}..."`);
@@ -120,18 +118,10 @@ async function safeSay(channel, message) {
     });
 }
 
-/**
- * Helper function to get an item's name from its Type ID using the pre-loaded map.
- * @param {number} typeID The ID of the item.
- * @returns {string} The name of the item or a fallback string.
- */
 function getTypeNameByID(typeID) {
     return eveFilesIDToNameMap.get(typeID) || `Item (ID: ${typeID})`;
 }
 
-/**
- * Fetches market data for a given item type ID from ESI.
- */
 async function fetchMarketData(itemName, typeID, channel, quantity = 1) {
     try {
         console.log(`[fetchMarketData] Start: Fetching market data for ${itemName} (TypeID: ${typeID}), Quantity: ${quantity}`);
@@ -143,7 +133,7 @@ async function fetchMarketData(itemName, typeID, channel, quantity = 1) {
 }
 
 async function fetchMarketDataFromESI(itemName, typeID, channel, quantity = 1, retryCount = 0) {
-    // ... This function remains unchanged ...
+    // This function is correct and remains unchanged.
     try {
         console.log(`[fetchMarketDataFromESI] Start ESI Call: Fetching for ${itemName} (TypeID: ${typeID}), Quantity: ${quantity}, Retry: ${retryCount}`);
         const isPlex = (typeID === PLEX_TYPE_ID);
@@ -204,7 +194,7 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, quantity = 1, r
 }
 
 async function getLowestSellPrice(typeID) {
-    // ... This function remains unchanged ...
+    // This function is correct and remains unchanged.
     const isPlex = (typeID === PLEX_TYPE_ID);
     const targetRegionId = isPlex ? GLOBAL_PLEX_REGION_ID : JITA_REGION_ID;
     const sellOrdersURL = `https://esi.evetech.net/latest/markets/${targetRegionId}/orders/?datasource=tranquility&order_type=sell&type_id=${typeID}`;
@@ -241,92 +231,90 @@ async function getLowestSellPrice(typeID) {
 }
 
 /**
- * Fetches blueprint data from EveRef and calculates production cost.
+ * Fetches manufacturing data for a given product from EveRef and calculates its build cost.
  * @param {string} productName - The name of the item to build.
  * @param {string} channel - The Twitch channel to send messages to.
  */
 async function fetchBlueprintCost(productName, channel) {
-    await safeSay(channel, `Checking blueprint for "${productName}"...`);
+    await safeSay(channel, `Checking recipe for "${productName}"...`);
     try {
-        // Step 1: Assume a standard blueprint name and get its TypeID.
-        const blueprintName = `${productName} Blueprint`;
-        const blueprintTypeID = await getItemTypeID(blueprintName);
+        // Step 1: Find the TypeID for the *product* itself.
+        const productTypeID = await getItemTypeID(productName);
 
-        if (!blueprintTypeID) {
-            await safeSay(channel, `❌ Could not find a blueprint for "${productName}". It might have a non-standard name or not be manufacturable. ❌`);
+        if (!productTypeID) {
+            await safeSay(channel, `❌ Could not find an EVE item named "${productName}". Please check the spelling. ❌`);
             return;
         }
         
-        // Check cache first for the blueprint data from EveRef
-        if (blueprintCache.has(blueprintTypeID)) {
-             console.log(`[fetchBlueprintCost] EveRef blueprint cache HIT for ${blueprintName} (ID: ${blueprintTypeID})`);
-             const blueprintData = blueprintCache.get(blueprintTypeID);
-             await calculateAndSendBlueprintCost(blueprintData, channel);
+        // Step 2: Check cache for the product's manufacturing data.
+        if (manufacturingCache.has(productTypeID)) {
+             console.log(`[fetchBlueprintCost] Manufacturing cache HIT for ${productName} (ID: ${productTypeID})`);
+             const manufacturingData = manufacturingCache.get(productTypeID);
+             await calculateAndSendBlueprintCost(productName, manufacturingData, channel);
              return;
         }
 
-        // Step 2: Fetch blueprint details from EveRef using the blueprint's TypeID.
-        const eveRefApiUrl = `https://everef.net/type/${blueprintTypeID}.json`;
-        console.log(`[fetchBlueprintCost] Fetching blueprint data from EveRef: ${eveRefApiUrl}`);
+        // Step 3: Fetch the product's data from EveRef using its TypeID.
+        const eveRefApiUrl = `https://everef.net/type/${productTypeID}.json`;
+        console.log(`[fetchBlueprintCost] Fetching product data from EveRef: ${eveRefApiUrl}`);
         
-        const blueprintRes = await apiLimiter.schedule(() => axios.get(eveRefApiUrl, {
+        const productRes = await apiLimiter.schedule(() => axios.get(eveRefApiUrl, {
             headers: { 'User-Agent': USER_AGENT },
             timeout: 10000
         }));
         
-        const blueprintData = blueprintRes.data;
+        const productData = productRes.data;
 
-        // Step 3: Validate the response has manufacturing data.
-        if (blueprintRes.status !== 200 || !blueprintData.manufacturing || !blueprintData.manufacturing.materials) {
-            await safeSay(channel, `❌ No manufacturing data found for "${productName}". The blueprint may be for research/copying only. ❌`);
+        // Step 4: Validate the response has the necessary manufacturing data.
+        if (productRes.status !== 200 || !productData.manufacturing || !productData.manufacturing.materials) {
+            await safeSay(channel, `❌ No manufacturing recipe found for "${productName}". It may be a non-buildable item (e.g., a faction drop or PLEX). ❌`);
             return;
         }
         
-        blueprintCache.set(blueprintTypeID, blueprintData); // Cache the successful result
-        await calculateAndSendBlueprintCost(blueprintData, channel);
+        const manufacturingData = productData.manufacturing;
+        manufacturingCache.set(productTypeID, manufacturingData); // Cache the successful result
+        await calculateAndSendBlueprintCost(productName, manufacturingData, channel);
 
     } catch (error) {
         if (axios.isAxiosError(error)) {
             const status = error.response?.status || 'Network Error';
             console.error(`[fetchBlueprintCost] Axios Error fetching from EveRef for "${productName}": Status ${status}`);
-            await safeSay(channel, `❌ Error fetching blueprint data for "${productName}": API returned status ${status}. ❌`);
+            await safeSay(channel, `❌ Error fetching recipe data for "${productName}": API returned status ${status}. ❌`);
         } else {
             console.error(`[fetchBlueprintCost] General error for "${productName}": ${error.message}`);
-            await safeSay(channel, `❌ An internal error occurred while fetching blueprint for "${productName}". ❌`);
+            await safeSay(channel, `❌ An internal error occurred while fetching recipe for "${productName}". ❌`);
         }
     }
 }
 
 /**
  * Calculates material cost, fetches product sell price, and sends the final message.
- * @param {object} blueprintData - The complete blueprint data object from EveRef.
+ * @param {string} productName - The name of the final product.
+ * @param {object} manufacturingData - The manufacturing object from EveRef.
  * @param {string} channel - The Twitch channel.
  */
-async function calculateAndSendBlueprintCost(blueprintData, channel) {
-    const productName = getTypeNameByID(blueprintData.manufacturing.products[0].type_id);
+async function calculateAndSendBlueprintCost(productName, manufacturingData, channel) {
     await safeSay(channel, `Calculating material costs for "${productName}"... This may take a moment.`);
 
-    const materials = blueprintData.manufacturing.materials;
-    const productInfo = blueprintData.manufacturing.products[0];
+    const materials = manufacturingData.materials;
+    const productInfo = manufacturingData.products[0];
     const productTypeID = productInfo.type_id;
     const productQuantity = productInfo.quantity;
 
     let totalMaterialCost = 0;
     let missingPrices = [];
 
-    // Fetch prices for all materials concurrently
     const pricePromises = materials.map(async (material) => {
         const price = await getLowestSellPrice(material.type_id);
         if (price !== null) {
             totalMaterialCost += price * material.quantity;
         } else {
-            const materialName = getTypeNameByID(material.type_id); // Use helper to get name
+            const materialName = getTypeNameByID(material.type_id);
             missingPrices.push(materialName);
             console.warn(`[calculateAndSendBlueprintCost] Missing price for material: ${materialName} (ID: ${material.type_id})`);
         }
     });
 
-    // Also fetch the final product's sell price concurrently
     const productSellPricePromise = getLowestSellPrice(productTypeID);
     const [productSellPrice] = await Promise.all([productSellPricePromise, ...pricePromises]);
 
@@ -354,10 +342,9 @@ async function calculateAndSendBlueprintCost(blueprintData, channel) {
     await safeSay(channel, message);
 }
 
-
 // Function to handle commands from Twitch chat
 client.on('message', (channel, userstate, message, self) => {
-    // ... This function remains largely unchanged ...
+    // This function is correct and remains unchanged.
     if (self) return;
 
     const args = message.trim().split(/\s+/);
@@ -430,12 +417,8 @@ client.on('message', (channel, userstate, message, self) => {
     }
 });
 
-/**
- * Function to get the TypeID of an item based on its name.
- * Checks local cache, then eve-files.com map, then falls back to Fuzzwork API.
- */
 async function getItemTypeID(itemName) {
-    // ... This function remains unchanged ...
+    // This function is correct and remains unchanged.
     const lowerCaseItemName = itemName.toLowerCase();
 
     if (isEveFilesTypeIDMapLoaded && eveFilesTypeIDMap.has(lowerCaseItemName)) {
