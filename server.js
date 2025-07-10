@@ -353,7 +353,9 @@ async function getLowestSellPrice(typeID) {
  * @param {string} channel - The Twitch channel to send messages to.
  */
 async function fetchBlueprintCost(itemName, channel) {
+    // Initial message to chat
     await safeSay(channel, `Calculating build cost for "${itemName}"... This might take a moment.`);
+    
     try {
         // Get the TypeID for the *product* (the ship itself), not the blueprint
         console.log(`[fetchBlueprintCost] Attempting to get TypeID for product: "${itemName}"`);
@@ -380,20 +382,23 @@ async function fetchBlueprintCost(itemName, channel) {
         console.log(`[fetchBlueprintCost] EVE Ref API Response Status: ${response.status}`);
         console.log(`[fetchBlueprintCost] Raw EVE Ref API Data (first 500 chars): ${JSON.stringify(response.data).substring(0, 500)}`);
 
-        if (response.status !== 200 || !response.data || !response.data.total_cost) {
+        // Check for the manufacturing data and cost within the nested structure
+        const manufacturingData = response.data.manufacturing?.[productTypeID];
+        const totalCost = manufacturingData?.cost; // Access cost directly from manufacturingData
+
+        if (response.status !== 200 || !manufacturingData || totalCost === undefined) {
             await safeSay(channel, `❌ Could not get build cost data for "${itemName}". Data might be unavailable or API error. ❌`);
             console.log(`[fetchBlueprintCost] EVE Ref API data missing or malformed for ${itemName} (Product TypeID: ${productTypeID}). Status: ${response.status}, Data: ${JSON.stringify(response.data)}`);
             return;
         }
 
-        const totalCost = response.data.total_cost;
         const totalCostFormatted = parseFloat(totalCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         
         let message = `Build Cost for ${itemName} x1: ${totalCostFormatted} ISK`;
 
         // EVE Ref API provides details on missing prices if any
-        if (response.data.missing_materials && response.data.missing_materials.length > 0) {
-            const missingNames = response.data.missing_materials.map(m => m.name).join(', ');
+        if (manufacturingData.missing_materials && manufacturingData.missing_materials.length > 0) {
+            const missingNames = manufacturingData.missing_materials.map(m => m.name).join(', ');
             message += ` (Missing prices for: ${missingNames})`;
         }
 
