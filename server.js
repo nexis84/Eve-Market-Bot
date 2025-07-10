@@ -261,7 +261,7 @@ async function getLowestSellPrice(typeID) {
 
 /**
  * Fetches the blueprint for a given product and calculates its production cost.
- * This is the main function for the !build command.
+ * This function now reliably finds the blueprint by its name, avoiding the failing `producttypeid` endpoint.
  * @param {string} productName - The name of the item to build (the product).
  * @param {string} channel - The Twitch channel to send messages to.
  */
@@ -269,59 +269,51 @@ async function fetchBlueprintCost(productName, channel) {
     await safeSay(channel, `Checking blueprint for "${productName}"...`);
     try {
         // Step 1: Assume a standard blueprint name ("<Item Name> Blueprint") and get its TypeID.
-        // This is a more reliable way to find manufacturable items than searching by the product's TypeID.
+        // This is more reliable than the previous method of searching by the product's TypeID.
         const blueprintName = `${productName} Blueprint`;
-        console.log(`[fetchBlueprintCost] Attempting to find blueprint by name: "${blueprintName}"`);
+        console.log(`[fetchBlueprintCost] Attempting to find blueprint by assumed name: "${blueprintName}"`);
         const blueprintTypeID = await getItemTypeID(blueprintName);
 
         if (!blueprintTypeID) {
-            // This is a common failure point for items that aren't built from a "Blueprint" (e.g., T2, faction)
             await safeSay(channel, `❌ Could not find a blueprint for "${productName}". It might have a non-standard name (e.g., faction/T2) or not be manufacturable. ❌`);
-            console.log(`[fetchBlueprintCost] No blueprint TypeID found for name "${blueprintName}".`);
+            console.log(`[fetchBlueprintCost] No blueprint TypeID found for assumed name "${blueprintName}".`);
             return;
         }
         console.log(`[fetchBlueprintCost] Found blueprint TypeID: ${blueprintTypeID} for "${blueprintName}".`);
 
-        // Step 2: Fetch the blueprint details from Fuzzwork using the blueprint's actual TypeID.
+        // Step 2: Fetch the blueprint details from Fuzzwork using the blueprint's own TypeID. This is the reliable endpoint.
         const blueprintApiUrl = `https://www.fuzzwork.co.uk/api/blueprint.php?typeid=${blueprintTypeID}`;
         console.log(`[fetchBlueprintCost] Fetching blueprint data from Fuzzwork by blueprint ID: ${blueprintApiUrl}`);
         
         const blueprintRes = await apiLimiter.schedule(() => axios.get(blueprintApiUrl, {
             headers: { 'User-Agent': USER_AGENT },
-            timeout: 10000
+            timeout: 10000,
+            validateStatus: (s) => s >= 200 && s < 500 // Let us handle non-200 responses
         }));
 
         console.log(`[fetchBlueprintCost] Fuzzwork Blueprint API Response Status: ${blueprintRes.status}`);
 
-        // Step 3: Check if the API returned valid data. A 200 with an empty object is possible.
-        if (blueprintRes.status !== 200 || !blueprintRes.data || Object.keys(blueprintRes.data).length === 0) {
-            await safeSay(channel, `❌ No manufacturing data found for "${productName}", even though a blueprint exists. The API may be unavailable or the item unbuildable. ❌`);
+        // Step 3: Check if the API returned valid data for the specific blueprint ID.
+        if (blueprintRes.status !== 200 || !blueprintRes.data || !blueprintRes.data[blueprintTypeID]) {
+            await safeSay(channel, `❌ Error retrieving manufacturing data for "${productName}" (API Status: ${blueprintRes.status}). The item may not be manufacturable. ❌`);
             console.log(`[fetchBlueprintCost] No data from Fuzzwork for blueprint ${blueprintName} (TypeID: ${blueprintTypeID}).`);
             return;
         }
-
-        // The Fuzzwork API returns an object where the key is the blueprint's TypeID.
+        
         const blueprintData = blueprintRes.data[blueprintTypeID];
         
-        if (!blueprintData || !blueprintData.materials) {
+        if (!blueprintData.materials || !blueprintData.productTypeID) {
             await safeSay(channel, `❌ Blueprint data for "${productName}" is incomplete or malformed. ❌`);
             console.error(`[fetchBlueprintCost] Malformed blueprint data for ${productName}:`, blueprintData);
             return;
         }
         
-        // Step 4: Extract the product's TypeID from the blueprint data and proceed with cost calculation.
-        const productTypeID = blueprintData.productTypeID;
-        if (!productTypeID) {
-            await safeSay(channel, `❌ Blueprint data for "${productName}" is missing the final product information. ❌`);
-            console.error(`[fetchBlueprintCost] Blueprint data for ${blueprintName} (ID: ${blueprintTypeID}) is missing a productTypeID.`);
-            return;
-        }
-
-        await calculateAndSendBlueprintCost(productName, productTypeID, blueprintData, channel);
+        // Step 4: We have all the data. Proceed with cost calculation.
+        // We use the productTypeID from the blueprint data to ensure accuracy.
+        await calculateAndSendBlueprintCost(productName, blueprintData.productTypeID, blueprintData, channel);
 
     } catch (error) {
         if (axios.isAxiosError(error)) {
-            // This will catch network errors or specific HTTP statuses like the 404 from the log if the URL is bad.
             const status = error.response?.status || 'Network Error';
             console.error(`[fetchBlueprintCost] Axios Error fetching blueprint for "${productName}": ${error.message}`, error.code === 'ECONNABORTED' ? '(Timeout)' : `Status: ${status}`);
             await safeSay(channel, `❌ Error fetching blueprint data for "${productName}": API returned status ${status}. ❌`);
@@ -331,7 +323,6 @@ async function fetchBlueprintCost(productName, channel) {
         }
     }
 }
-
 
 /**
  * Calculates material cost, fetches product sell price, and sends a comprehensive build cost message.
