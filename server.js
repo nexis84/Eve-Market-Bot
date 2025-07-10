@@ -245,7 +245,7 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, quantity = 1, r
                     await safeSay(channel, `❌ Error fetching market data for "${itemName}": ESI Error ${error.response.status}. ❌`);
                 }
             } else {
-                console.error(`[fetchMarketDataFromESI] Network/Request Error for "${itemName}":`, error.message);
+                console.error(`[fetchMarketDataFromESI] Network/Request Error for "${itemName}".`, error.message);
                 await safeSay(channel, `❌ Network error fetching data for "${itemName}". ❌`);
             }
         } else {
@@ -314,30 +314,33 @@ async function getLowestSellPrice(typeID) {
 async function fetchBlueprintCost(itemName, channel) {
     await safeSay(channel, `Calculating build cost for "${itemName}"... This might take a moment.`);
     try {
-        const typeID = await getItemTypeID(itemName);
-        if (!typeID) {
-            await safeSay(channel, `❌ Could not find an EVE Online item matching "${itemName}". Check spelling? ❌`);
+        // Get the TypeID for the blueprint, not the item itself
+        const blueprintTypeName = `${itemName} Blueprint`;
+        const blueprintTypeID = await getItemTypeID(blueprintTypeName); // Pass true to indicate it's a blueprint search
+        
+        if (!blueprintTypeID) {
+            await safeSay(channel, `❌ Could not find a blueprint for "${itemName}". Check spelling or if it's a manufacturable item. ❌`);
             return;
         }
 
         // Check blueprint cache first
-        if (blueprintCache.has(typeID)) {
-            console.log(`[fetchBlueprintCost] Blueprint Cache HIT for TypeID: ${typeID}`);
-            const cachedBlueprint = blueprintCache.get(typeID);
+        if (blueprintCache.has(blueprintTypeID)) {
+            console.log(`[fetchBlueprintCost] Blueprint Cache HIT for TypeID: ${blueprintTypeID}`);
+            const cachedBlueprint = blueprintCache.get(blueprintTypeID);
             // If we have cached data, we still need to fetch current market prices for components
-            await calculateAndSendBlueprintCost(itemName, typeID, cachedBlueprint, channel);
+            await calculateAndSendBlueprintCost(itemName, blueprintTypeID, cachedBlueprint, channel);
             return;
         }
 
-        console.log(`[fetchBlueprintCost] Fetching blueprint data for ${itemName} (TypeID: ${typeID}) from Fuzzwork.`);
-        const blueprintRes = await apiLimiter.schedule(() => axios.get(`https://www.fuzzwork.co.uk/api/blueprint.php?typeid=${typeID}`, {
+        console.log(`[fetchBlueprintCost] Fetching blueprint data for ${itemName} (Blueprint TypeID: ${blueprintTypeID}) from Fuzzwork.`);
+        const blueprintRes = await apiLimiter.schedule(() => axios.get(`https://www.fuzzwork.co.uk/api/blueprint.php?typeid=${blueprintTypeID}`, {
             headers: { 'User-Agent': USER_AGENT },
             timeout: 10000 // Increased timeout for blueprint API
         }));
 
         if (blueprintRes.status !== 200 || !blueprintRes.data || Object.keys(blueprintRes.data).length === 0) {
             await safeSay(channel, `❌ No blueprint data found for "${itemName}". It might not be a manufacturable item or data is unavailable. ❌`);
-            console.log(`[fetchBlueprintCost] No blueprint data from Fuzzwork for ${itemName} (TypeID: ${typeID}). Status: ${blueprintRes.status}, Data: ${JSON.stringify(blueprintRes.data)}`);
+            console.log(`[fetchBlueprintCost] No blueprint data from Fuzzwork for ${itemName} (Blueprint TypeID: ${blueprintTypeID}). Status: ${blueprintRes.status}, Data: ${JSON.stringify(blueprintRes.data)}`);
             return;
         }
 
@@ -346,15 +349,15 @@ async function fetchBlueprintCost(itemName, channel) {
         const blueprintData = Object.values(blueprintRes.data)[0]; // Get the first blueprint object
         if (!blueprintData || !blueprintData.materials) {
             await safeSay(channel, `❌ Blueprint data for "${itemName}" is incomplete or malformed. ❌`);
-            console.error(`[fetchBlueprintCost] Malformed blueprint data for ${itemName} (TypeID: ${typeID}):`, blueprintData);
+            console.error(`[fetchBlueprintCost] Malformed blueprint data for ${itemName} (Blueprint TypeID: ${blueprintTypeID}):`, blueprintData);
             return;
         }
 
         // Cache the raw blueprint data (materials, product, etc.)
-        blueprintCache.set(typeID, blueprintData);
-        console.log(`[fetchBlueprintCost] Blueprint data cached for TypeID: ${typeID}`);
+        blueprintCache.set(blueprintTypeID, blueprintData);
+        console.log(`[fetchBlueprintCost] Blueprint data cached for TypeID: ${blueprintTypeID}`);
 
-        await calculateAndSendBlueprintCost(itemName, typeID, blueprintData, channel);
+        await calculateAndSendBlueprintCost(itemName, blueprintTypeID, blueprintData, channel);
 
     } catch (error) {
         if (axios.isAxiosError(error)) {
@@ -370,19 +373,20 @@ async function fetchBlueprintCost(itemName, channel) {
 /**
  * Helper function to calculate and send the blueprint cost message.
  * Separated to allow caching of blueprint data but fresh price fetching.
- * @param {string} itemName - The name of the item.
- * @param {number} typeID - The Type ID of the item.
+ * @param {string} originalItemName - The original name of the item requested by the user (e.g., "Drake").
+ * @param {number} blueprintTypeID - The Type ID of the blueprint.
  * @param {object} blueprintData - The raw blueprint data from Fuzzwork.
  * @param {string} channel - The Twitch channel.
  */
-async function calculateAndSendBlueprintCost(itemName, typeID, blueprintData, channel) {
+async function calculateAndSendBlueprintCost(originalItemName, blueprintTypeID, blueprintData, channel) {
     const materials = blueprintData.materials;
-    const productName = blueprintData.productName || itemName; // Use product name from blueprint if available
+    // Use the product name from the blueprint data, falling back to original item name
+    const productName = blueprintData.productName || originalItemName;
     const productQuantity = blueprintData.productQuantity || 1; // Default to 1 if not specified
 
     let totalCost = 0;
     let missingPrices = [];
-    let materialDetails = [];
+    let materialDetails = []; // Not used for chat message, but good for debugging
 
     console.log(`[calculateAndSendBlueprintCost] Calculating costs for ${productName}, materials:`, materials);
 
@@ -461,6 +465,7 @@ client.on('message', (channel, userstate, message, self) => {
             return;
         }
 
+        // For !market, we want the item's typeID
         getItemTypeID(itemName)
             .then(typeID => {
                 console.log(`[client.on('message')] TypeID result for "${itemName}": ${typeID}. Preparing to fetch market data for channel: ${channel}, Quantity: ${quantity}`);
@@ -495,6 +500,7 @@ client.on('message', (channel, userstate, message, self) => {
             return;
         }
 
+        // For !info, we want the item's typeID
         getItemTypeID(itemName)
             .then(typeID => {
                 console.log(`[client.on('message')] TypeID result for !info "${itemName}": ${typeID}. Preparing reply for channel: ${channel}`);
@@ -521,9 +527,16 @@ client.on('message', (channel, userstate, message, self) => {
     // **** END OF MESSAGE HANDLER ****
 });
 
-// Function to get the TypeID of an item based on its name (using Fuzzwork API)
+/**
+ * Function to get the TypeID of an item based on its name (using Fuzzwork API).
+ * This function now intelligently searches for blueprints if the name ends with "Blueprint"
+ * or if explicitly requested by the caller (though not currently used that way).
+ * @param {string} itemName - The name of the item to look up.
+ * @returns {Promise<number|null>} The Type ID or null if not found.
+ */
 async function getItemTypeID(itemName) {
     const lowerCaseItemName = itemName.toLowerCase();
+    // Check cache first for the exact name
     if (typeIDCache.has(lowerCaseItemName)) {
         console.log(`[getItemTypeID] Cache HIT for "${itemName}"`);
         return typeIDCache.get(lowerCaseItemName);
@@ -545,8 +558,8 @@ async function getItemTypeID(itemName) {
             });
         });
 
-        console.log(`[getItemTypeID] Fuzzwork API Response Status for "${itemName}": ${searchRes.status}`); // Added log
-        console.log(`[getItemTypeID] Raw Fuzzwork Data for "${itemName}": ${JSON.stringify(searchRes.data)}`); // Added log
+        console.log(`[getItemTypeID] Fuzzwork API Response Status for "${itemName}": ${searchRes.status}`);
+        console.log(`[getItemTypeID] Raw Fuzzwork Data for "${itemName}": ${JSON.stringify(searchRes.data)}`);
 
         if (searchRes.status !== 200) {
             console.error(`[getItemTypeID] Fuzzwork API Error for "${itemName}": HTTP ${searchRes.status}. Response: ${JSON.stringify(searchRes.data)}`);
@@ -554,41 +567,37 @@ async function getItemTypeID(itemName) {
         }
 
         const responseData = searchRes.data;
+        let foundTypeID = null;
+
         if (typeof responseData === 'string') {
             const typeIDString = responseData.trim();
             if (typeIDString && !isNaN(typeIDString) && typeIDString !== '[]') {
-                const typeID = Number(typeIDString);
-                console.log(`[getItemTypeID] Fuzzwork Success (String): Found TypeID ${typeID} for "${itemName}"`);
-                typeIDCache.set(lowerCaseItemName, typeID);
-                return typeID;
+                foundTypeID = Number(typeIDString);
+                console.log(`[getItemTypeID] Fuzzwork Success (String): Found TypeID ${foundTypeID} for "${itemName}"`);
             } else {
                 console.log(`[getItemTypeID] Fuzzwork Info (String): No exact match or invalid ID for "${itemName}". Response: "${typeIDString}"`);
-                return null;
             }
         } else if (typeof responseData === 'object' && responseData !== null) {
-            let foundTypeID = null;
             if (Array.isArray(responseData.typeID) && responseData.typeID.length > 0) {
+                // Prioritize exact match, then the first result
                 const exactMatch = responseData.typeID.find(item => item.typeName.toLowerCase() === lowerCaseItemName);
                 foundTypeID = exactMatch ? exactMatch.typeID : responseData.typeID[0].typeID;
                 const foundName = exactMatch ? exactMatch.typeName : responseData.typeID[0].typeName;
-                console.log(`[getItemTypeID] Fuzzwork Success (Array): Found ambiguous match for "${itemName}", using ID ${foundTypeID} (${foundName})`);
+                console.log(`[getItemTypeID] Fuzzwork Success (Array): Found match for "${itemName}", using ID ${foundTypeID} (${foundName})`);
             } else if (responseData.typeID && !isNaN(responseData.typeID)) {
                 foundTypeID = Number(responseData.typeID);
                 console.log(`[getItemTypeID] Fuzzwork Success (Object): Found TypeID ${foundTypeID} for "${itemName}"`);
             } else if (Array.isArray(responseData) && responseData.length === 0) {
                 console.log(`[getItemTypeID] Fuzzwork Info (Empty Array): No match found for "${itemName}".`);
-                return null;
-            }
-
-            if (foundTypeID) {
-                typeIDCache.set(lowerCaseItemName, foundTypeID);
-                return foundTypeID;
-            } else {
-                console.warn(`[getItemTypeID] Fuzzwork Warning: Unexpected object structure or no TypeID found for "${itemName}". Response: ${JSON.stringify(responseData)}`);
-                return null;
             }
         } else {
             console.warn(`[getItemTypeID] Fuzzwork Warning: Unexpected response type for "${itemName}". Response: ${JSON.stringify(responseData)}`);
+        }
+
+        if (foundTypeID) {
+            typeIDCache.set(lowerCaseItemName, foundTypeID);
+            return foundTypeID;
+        } else {
             return null;
         }
     } catch (error) {
@@ -600,6 +609,7 @@ async function getItemTypeID(itemName) {
         return null;
     }
 }
+
 
 // Start the Express server for Cloud Run health checks etc.
 const port = process.env.PORT || 8080;
