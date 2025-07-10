@@ -38,7 +38,7 @@ const client = new tmi.Client({
 const USER_AGENT = process.env.USER_AGENT || 'EveTwitchMarketBot/1.1.0 (Contact: YourEmailOrDiscord)'; // Customize this
 
 // Cache for Type IDs
-const typeIDCache = new Map();
+const typeIDCache = new Map(); // This will now primarily be populated by eve-files.com
 // Cache for Blueprint data to reduce API calls
 const blueprintCache = new Map();
 
@@ -46,6 +46,43 @@ const JITA_SYSTEM_ID = 30000142; // Jita system ID (still used for non-PLEX item
 const JITA_REGION_ID = 10000002; // The Forge Region ID (still used for non-PLEX items)
 const PLEX_TYPE_ID = 44992; // Correct Type ID for PLEX (Pilot's License Extension)
 const GLOBAL_PLEX_REGION_ID = 19000001; // New Global PLEX Market Region ID
+
+// New Map to store Type IDs from eve-files.com/chribba/typeid.txt
+const eveFilesTypeIDMap = new Map();
+let isEveFilesTypeIDMapLoaded = false;
+
+/**
+ * Loads Type IDs from eve-files.com/chribba/typeid.txt into an in-memory map.
+ * This should be called once at bot startup.
+ */
+async function loadEveFilesTypeIDs() {
+    console.log('[loadEveFilesTypeIDs] Starting to load Type IDs from eve-files.com...');
+    const typeIdFileUrl = 'https://eve-files.com/chribba/typeid.txt';
+    try {
+        const response = await axios.get(typeIdFileUrl, {
+            headers: { 'User-Agent': USER_AGENT },
+            timeout: 30000 // Increased timeout for large file download
+        });
+
+        const lines = response.data.split('\n');
+        lines.forEach(line => {
+            const parts = line.trim().split(' ');
+            if (parts.length >= 2) {
+                const typeID = parseInt(parts[0], 10);
+                // Rejoin parts from index 1 onwards to form the full name
+                const itemName = parts.slice(1).join(' ').trim();
+                if (!isNaN(typeID) && itemName) {
+                    eveFilesTypeIDMap.set(itemName.toLowerCase(), typeID);
+                }
+            }
+        });
+        isEveFilesTypeIDMapLoaded = true;
+        console.log(`[loadEveFilesTypeIDs] Successfully loaded ${eveFilesTypeIDMap.size} Type IDs from eve-files.com.`);
+    } catch (error) {
+        console.error(`[loadEveFilesTypeIDs] Error loading Type IDs from ${typeIdFileUrl}:`, error.message);
+        // If loading fails, the bot will still try Fuzzwork as a fallback, but log the error.
+    }
+}
 
 // --- TMI Event Listeners ---
 client.on('connected', (addr, port) => {
@@ -73,14 +110,18 @@ client.on('error', (err) => {
 // --- End TMI Event Listeners ---
 
 // Connect the Twitch bot to the chat
-client.connect()
-    .then(() => {
-        console.log("Twitch client connection initiated.");
-    })
-    .catch(error => {
-        console.error(">>>>>> Twitch client failed to connect:", error);
-        process.exit(1);
-    });
+// Load Type IDs before connecting the client
+loadEveFilesTypeIDs().then(() => {
+    client.connect()
+        .then(() => {
+            console.log("Twitch client connection initiated.");
+        })
+        .catch(error => {
+            console.error(">>>>>> Twitch client failed to connect:", error);
+            process.exit(1);
+        });
+});
+
 
 // Function to safely send messages using the chat limiter
 async function safeSay(channel, message) {
@@ -316,12 +357,15 @@ async function fetchBlueprintCost(itemName, channel) {
     try {
         // Get the TypeID for the blueprint, not the item itself
         const blueprintTypeName = `${itemName} Blueprint`;
-        const blueprintTypeID = await getItemTypeID(blueprintTypeName); // Pass true to indicate it's a blueprint search
+        console.log(`[fetchBlueprintCost] Attempting to get TypeID for blueprint: "${blueprintTypeName}"`);
+        const blueprintTypeID = await getItemTypeID(blueprintTypeName);
         
         if (!blueprintTypeID) {
             await safeSay(channel, `❌ Could not find a blueprint for "${itemName}". Check spelling or if it's a manufacturable item. ❌`);
+            console.log(`[fetchBlueprintCost] No blueprint TypeID found for "${blueprintTypeName}".`);
             return;
         }
+        console.log(`[fetchBlueprintCost] Found blueprint TypeID: ${blueprintTypeID} for "${blueprintTypeName}".`);
 
         // Check blueprint cache first
         if (blueprintCache.has(blueprintTypeID)) {
@@ -332,11 +376,16 @@ async function fetchBlueprintCost(itemName, channel) {
             return;
         }
 
-        console.log(`[fetchBlueprintCost] Fetching blueprint data for ${itemName} (Blueprint TypeID: ${blueprintTypeID}) from Fuzzwork.`);
-        const blueprintRes = await apiLimiter.schedule(() => axios.get(`https://www.fuzzwork.co.uk/api/blueprint.php?typeid=${blueprintTypeID}`, {
+        const blueprintApiUrl = `https://www.fuzzwork.co.uk/api/blueprint.php?typeid=${blueprintTypeID}`;
+        console.log(`[fetchBlueprintCost] Fetching blueprint data from Fuzzwork API URL: ${blueprintApiUrl}`);
+        const blueprintRes = await apiLimiter.schedule(() => axios.get(blueprintApiUrl, {
             headers: { 'User-Agent': USER_AGENT },
             timeout: 10000 // Increased timeout for blueprint API
         }));
+
+        console.log(`[fetchBlueprintCost] Fuzzwork Blueprint API Response Status: ${blueprintRes.status}`);
+        console.log(`[fetchBlueprintCost] Raw Fuzzwork Blueprint Data (first 500 chars): ${JSON.stringify(blueprintRes.data).substring(0, 500)}`);
+
 
         if (blueprintRes.status !== 200 || !blueprintRes.data || Object.keys(blueprintRes.data).length === 0) {
             await safeSay(channel, `❌ No blueprint data found for "${itemName}". It might not be a manufacturable item or data is unavailable. ❌`);
@@ -508,6 +557,7 @@ client.on('message', (channel, userstate, message, self) => {
                     const eveRefUrl = `https://everef.net/type/${typeID}`;
                     safeSay(channel, `${itemName} info: ${eveRefUrl}`);
                 } else {
+                    console.log(`[client.on('message')] No TypeID found for "${itemName}".`);
                     safeSay(channel, `❌ Could not find an EVE Online item matching "${itemName}". Check spelling? ❌`);
                 }
             })
@@ -528,21 +578,31 @@ client.on('message', (channel, userstate, message, self) => {
 });
 
 /**
- * Function to get the TypeID of an item based on its name (using Fuzzwork API).
- * This function now intelligently searches for blueprints if the name ends with "Blueprint"
- * or if explicitly requested by the caller (though not currently used that way).
+ * Function to get the TypeID of an item based on its name.
+ * It first checks the in-memory map loaded from eve-files.com, then falls back to Fuzzwork API.
  * @param {string} itemName - The name of the item to look up.
  * @returns {Promise<number|null>} The Type ID or null if not found.
  */
 async function getItemTypeID(itemName) {
     const lowerCaseItemName = itemName.toLowerCase();
-    // Check cache first for the exact name
+
+    // 1. Check the eve-files.com map first
+    if (isEveFilesTypeIDMapLoaded) {
+        if (eveFilesTypeIDMap.has(lowerCaseItemName)) {
+            console.log(`[getItemTypeID] eve-files.com Cache HIT for "${itemName}"`);
+            return eveFilesTypeIDMap.get(lowerCaseItemName);
+        }
+    } else {
+        console.warn('[getItemTypeID] eve-files.com TypeID map not yet loaded. Falling back to Fuzzwork.');
+    }
+
+    // 2. Fallback to Fuzzwork API if not found in eve-files.com map or if map isn't loaded
     if (typeIDCache.has(lowerCaseItemName)) {
-        console.log(`[getItemTypeID] Cache HIT for "${itemName}"`);
+        console.log(`[getItemTypeID] Fuzzwork Cache HIT for "${itemName}"`);
         return typeIDCache.get(lowerCaseItemName);
     }
 
-    console.log(`[getItemTypeID] Cache MISS for "${itemName}". Fetching from Fuzzwork...`);
+    console.log(`[getItemTypeID] Cache MISS for "${itemName}". Attempting to fetch from Fuzzwork...`);
     try {
         let cleanItemName = itemName.replace(/[^a-zA-Z0-9\s'-]/g, '').trim();
         if (!cleanItemName) {
@@ -550,19 +610,21 @@ async function getItemTypeID(itemName) {
             return null;
         }
 
+        const fuzzworkTypeIdUrl = `https://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(cleanItemName)}`;
+        console.log(`[getItemTypeID] Calling Fuzzwork TypeID API: ${fuzzworkTypeIdUrl}`);
+        
         const searchRes = await apiLimiter.schedule(() => {
-            console.log(`[getItemTypeID] Axios Call to Fuzzwork API for TypeID: "${cleanItemName}"`);
-            return axios.get(`https://www.fuzzwork.co.uk/api/typeid.php?typename=${encodeURIComponent(cleanItemName)}`, {
+            return axios.get(fuzzworkTypeIdUrl, {
                 headers: { 'User-Agent': USER_AGENT },
                 timeout: 5000
             });
         });
 
-        console.log(`[getItemTypeID] Fuzzwork API Response Status for "${itemName}": ${searchRes.status}`);
-        console.log(`[getItemTypeID] Raw Fuzzwork Data for "${itemName}": ${JSON.stringify(searchRes.data)}`);
+        console.log(`[getItemTypeID] Fuzzwork TypeID API Response Status for "${itemName}": ${searchRes.status}`);
+        console.log(`[getItemTypeID] Raw Fuzzwork TypeID Data for "${itemName}": ${JSON.stringify(searchRes.data)}`);
 
         if (searchRes.status !== 200) {
-            console.error(`[getItemTypeID] Fuzzwork API Error for "${itemName}": HTTP ${searchRes.status}. Response: ${JSON.stringify(searchRes.data)}`);
+            console.error(`[getItemTypeID] Fuzzwork TypeID API Error for "${itemName}": HTTP ${searchRes.status}. Response: ${JSON.stringify(searchRes.data)}`);
             return null;
         }
 
@@ -595,7 +657,7 @@ async function getItemTypeID(itemName) {
         }
 
         if (foundTypeID) {
-            typeIDCache.set(lowerCaseItemName, foundTypeID);
+            typeIDCache.set(lowerCaseItemName, foundTypeID); // Cache Fuzzwork result too
             return foundTypeID;
         } else {
             return null;
