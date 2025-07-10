@@ -6,10 +6,10 @@ const express = require('express');
 // Set up Express server for Cloud Run
 const app = express();
 
-// Set up rate limiter for external APIs (ESI, Fuzzwork, EVE Ref)
+// Set up rate limiter for external APIs (ESI, Fuzzwork)
 const apiLimiter = new Bottleneck({
-    minTime: 500, // 500ms between ESI/external requests (2 request per second)
-    maxConcurrent: 1 // Only one external request at a time
+    minTime: 500, // 500ms between ESI requests (2 request per second)
+    maxConcurrent: 1 // Only one ESI request at a time
 });
 
 // Set up rate limiter for sending Twitch chat messages
@@ -39,8 +39,8 @@ const USER_AGENT = process.env.USER_AGENT || 'EveTwitchMarketBot/1.1.0 (Contact:
 
 // Cache for Type IDs
 const typeIDCache = new Map(); // This will now primarily be populated by eve-files.com
-// Cache for Blueprint data (though less relevant with EVE Ref Industry API)
-const blueprintCache = new Map(); // Still useful if we ever need raw blueprint data for other purposes
+// Cache for Blueprint data to reduce API calls
+const blueprintCache = new Map();
 
 const JITA_SYSTEM_ID = 30000142; // Jita system ID (still used for non-PLEX items)
 const JITA_REGION_ID = 10000002; // The Forge Region ID (still used for non-PLEX items)
@@ -232,7 +232,7 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, quantity = 1, r
                 : null;
             const jitaBuyOrders = buyOrders.filter(order => order.system_id === JITA_SYSTEM_ID);
             highestBuyOrder = jitaBuyOrders.length > 0
-                ? jitaBuyOrders.reduce((max, order) => (order.price > max.price ? order : min), jitaBuyOrders[0])
+                ? jitaBuyOrders.reduce((max, order) => (order.price > max.price ? order : max), jitaBuyOrders[0])
                 : null;
         }
 
@@ -348,72 +348,137 @@ async function getLowestSellPrice(typeID) {
 }
 
 /**
- * Fetches the blueprint materials for an item and calculates its production cost using EVE Ref Industry Cost API.
- * @param {string} itemName - The name of the item to build (e.g., "Drake").
+ * Fetches the blueprint materials for an item and calculates its production cost.
+ * @param {string} itemName - The name of the item to build.
  * @param {string} channel - The Twitch channel to send messages to.
  */
 async function fetchBlueprintCost(itemName, channel) {
-    // Initial message to chat
     await safeSay(channel, `Calculating build cost for "${itemName}"... This might take a moment.`);
-    
     try {
-        // Get the TypeID for the *product* (the ship itself), not the blueprint
-        console.log(`[fetchBlueprintCost] Attempting to get TypeID for product: "${itemName}"`);
-        const productTypeID = await getItemTypeID(itemName);
+        // Get the TypeID for the blueprint, not the item itself
+        const blueprintTypeName = `${itemName} Blueprint`;
+        console.log(`[fetchBlueprintCost] Attempting to get TypeID for blueprint: "${blueprintTypeName}"`);
+        const blueprintTypeID = await getItemTypeID(blueprintTypeName);
         
-        if (!productTypeID) {
-            await safeSay(channel, `❌ Could not find item "${itemName}". Check spelling. ❌`);
-            console.log(`[fetchBlueprintCost] No product TypeID found for "${itemName}".`);
+        if (!blueprintTypeID) {
+            await safeSay(channel, `❌ Could not find a blueprint for "${itemName}". Check spelling or if it's a manufacturable item. ❌`);
+            console.log(`[fetchBlueprintCost] No blueprint TypeID found for "${blueprintTypeName}".`);
             return;
         }
-        console.log(`[fetchBlueprintCost] Found product TypeID: ${productTypeID} for "${itemName}".`);
+        console.log(`[fetchBlueprintCost] Found blueprint TypeID: ${blueprintTypeID} for "${blueprintTypeName}".`);
 
-        // EVE Ref Industry Cost API URL
-        // We'll calculate for 1 run for simplicity, assuming default ME/TE (0/0) and Jita system cost index.
-        // For more advanced calculations, you'd add parameters like &me=5&te=4&system_id=...
-        const eveRefApiUrl = `https://api.everef.net/v1/industry/cost?product_id=${productTypeID}&runs=1&manufacturing_cost=0.01&facility_tax=0.02`; // Added default cost index and tax for a more realistic base calculation
-        console.log(`[fetchBlueprintCost] Fetching blueprint cost from EVE Ref API URL: ${eveRefApiUrl}`);
+        // Check blueprint cache first
+        if (blueprintCache.has(blueprintTypeID)) {
+            console.log(`[fetchBlueprintCost] Blueprint Cache HIT for TypeID: ${blueprintTypeID}`);
+            const cachedBlueprint = blueprintCache.get(blueprintTypeID);
+            // If we have cached data, we still need to fetch current market prices for components
+            await calculateAndSendBlueprintCost(itemName, blueprintTypeID, cachedBlueprint, channel);
+            return;
+        }
 
-        const response = await apiLimiter.schedule(() => axios.get(eveRefApiUrl, {
+        const blueprintApiUrl = `https://www.fuzzwork.co.uk/api/blueprint.php?typeid=${blueprintTypeID}`;
+        console.log(`[fetchBlueprintCost] Fetching blueprint data from Fuzzwork API URL: ${blueprintApiUrl}`);
+        const blueprintRes = await apiLimiter.schedule(() => axios.get(blueprintApiUrl, {
             headers: { 'User-Agent': USER_AGENT },
-            timeout: 15000 // Increased timeout for this more complex API
+            timeout: 10000 // Increased timeout for blueprint API
         }));
 
-        console.log(`[fetchBlueprintCost] EVE Ref API Response Status: ${response.status}`);
-        console.log(`[fetchBlueprintCost] Raw EVE Ref API Data (first 500 chars): ${JSON.stringify(response.data).substring(0, 500)}`);
+        console.log(`[fetchBlueprintCost] Fuzzwork Blueprint API Response Status: ${blueprintRes.status}`);
+        console.log(`[fetchBlueprintCost] Raw Fuzzwork Blueprint Data (first 500 chars): ${JSON.stringify(blueprintRes.data).substring(0, 500)}`);
 
-        // Check for the manufacturing data and cost within the nested structure
-        const manufacturingData = response.data.manufacturing?.[productTypeID];
-        const totalCost = manufacturingData?.cost; // Access cost directly from manufacturingData
 
-        if (response.status !== 200 || !manufacturingData || totalCost === undefined) {
-            await safeSay(channel, `❌ Could not get build cost data for "${itemName}". Data might be unavailable or API error. ❌`);
-            console.log(`[fetchBlueprintCost] EVE Ref API data missing or malformed for ${itemName} (Product TypeID: ${productTypeID}). Status: ${response.status}, Data: ${JSON.stringify(response.data)}`);
+        if (blueprintRes.status !== 200 || !blueprintRes.data || Object.keys(blueprintRes.data).length === 0) {
+            await safeSay(channel, `❌ No blueprint data found for "${itemName}". It might not be a manufacturable item or data is unavailable. ❌`);
+            console.log(`[fetchBlueprintCost] No blueprint data from Fuzzwork for ${itemName} (Blueprint TypeID: ${blueprintTypeID}). Status: ${blueprintRes.status}, Data: ${JSON.stringify(blueprintRes.data)}`);
             return;
         }
 
-        const totalCostFormatted = parseFloat(totalCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        
-        let message = `Build Cost for ${itemName} x1: ${totalCostFormatted} ISK`;
-
-        // EVE Ref API provides details on missing prices if any
-        if (manufacturingData.missing_materials && manufacturingData.missing_materials.length > 0) {
-            const missingNames = manufacturingData.missing_materials.map(m => m.name).join(', ');
-            message += ` (Missing prices for: ${missingNames})`;
+        // Fuzzwork blueprint API returns an object where keys are typeIDs
+        // We're interested in the materials for the first (and usually only) blueprint entry
+        const blueprintData = Object.values(blueprintRes.data)[0]; // Get the first blueprint object
+        if (!blueprintData || !blueprintData.materials) {
+            await safeSay(channel, `❌ Blueprint data for "${itemName}" is incomplete or malformed. ❌`);
+            console.error(`[fetchBlueprintCost] Malformed blueprint data for ${itemName} (Blueprint TypeID: ${blueprintTypeID}):`, blueprintData);
+            return;
         }
 
-        await safeSay(channel, message);
+        // Cache the raw blueprint data (materials, product, etc.)
+        blueprintCache.set(blueprintTypeID, blueprintData);
+        console.log(`[fetchBlueprintCost] Blueprint data cached for TypeID: ${blueprintTypeID}`);
+
+        await calculateAndSendBlueprintCost(itemName, blueprintTypeID, blueprintData, channel);
 
     } catch (error) {
         if (axios.isAxiosError(error)) {
-            console.error(`[fetchBlueprintCost] Axios Error fetching build cost for "${itemName}": ${error.message}`, error.code === 'ECONNABORTED' ? '(Timeout)' : `Status: ${error.response?.status}`);
-            await safeSay(channel, `❌ Error fetching build cost for "${itemName}": ${error.response?.status || 'Network Error'}. ❌`);
+            console.error(`[fetchBlueprintCost] Axios Error fetching blueprint for "${itemName}": ${error.message}`, error.code === 'ECONNABORTED' ? '(Timeout)' : `Status: ${error.response?.status}`);
+            await safeSay(channel, `❌ Error fetching blueprint data for "${itemName}": ${error.response?.status || 'Network Error'}. ❌`);
         } else {
-            console.error(`[fetchBlueprintCost] General error fetching build cost for "${itemName}": ${error.message}`);
-            await safeSay(channel, `❌ An internal error occurred while fetching build cost for "${itemName}". ❌`);
+            console.error(`[fetchBlueprintCost] General error fetching blueprint for "${itemName}": ${error.message}`);
+            await safeSay(channel, `❌ An internal error occurred while fetching blueprint for "${itemName}". ❌`);
         }
     }
 }
+
+/**
+ * Helper function to calculate and send the blueprint cost message.
+ * Separated to allow caching of blueprint data but fresh price fetching.
+ * @param {string} originalItemName - The original name of the item requested by the user (e.g., "Drake").
+ * @param {number} blueprintTypeID - The Type ID of the blueprint.
+ * @param {object} blueprintData - The raw blueprint data from Fuzzwork.
+ * @param {string} channel - The Twitch channel.
+ */
+async function calculateAndSendBlueprintCost(originalItemName, blueprintTypeID, blueprintData, channel) {
+    const materials = blueprintData.materials;
+    // Use the product name from the blueprint data, falling back to original item name
+    const productName = blueprintData.productName || originalItemName;
+    const productQuantity = blueprintData.productQuantity || 1; // Default to 1 if not specified
+
+    let totalCost = 0;
+    let missingPrices = [];
+    let materialDetails = []; // Not used for chat message, but good for debugging
+
+    console.log(`[calculateAndSendBlueprintCost] Calculating costs for ${productName}, materials:`, materials);
+
+    // Fetch prices for all materials concurrently
+    const pricePromises = materials.map(async (material) => {
+        const materialTypeID = material.typeID;
+        const materialQuantity = material.quantity;
+        const materialName = material.typeName; // Fuzzwork blueprint API provides typeName
+
+        const price = await getLowestSellPrice(materialTypeID);
+
+        if (price !== null) {
+            const materialCost = price * materialQuantity;
+            totalCost += materialCost;
+            materialDetails.push(`${materialName} x${materialQuantity}: ${parseFloat(materialCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ISK`);
+            console.log(`[calculateAndSendBlueprintCost] Material: ${materialName}, Price: ${price}, Quantity: ${materialQuantity}, Cost: ${materialCost}`);
+        } else {
+            missingPrices.push(materialName);
+            console.warn(`[calculateAndSendBlueprintCost] Missing price for material: ${materialName} (TypeID: ${materialTypeID})`);
+        }
+    });
+
+    await Promise.all(pricePromises);
+
+    let message = `Build Cost for ${productName} x${productQuantity}: `;
+    if (totalCost > 0) {
+        message += `${parseFloat(totalCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ISK`;
+    } else {
+        message += `(No cost calculated, possibly due to missing prices)`;
+    }
+
+    if (missingPrices.length > 0) {
+        message += ` (Missing prices for: ${missingPrices.join(', ')})`;
+    }
+
+    await safeSay(channel, message);
+
+    // Optionally, send detailed material breakdown if the message isn't too long
+    // You might want to add a check here for message length if materialDetails is very long
+    // For now, let's keep it simple and just send the total.
+    // If you want to show details, consider a separate command like !builddetails
+}
+
 
 // Function to handle commands from Twitch chat
 client.on('message', (channel, userstate, message, self) => {
