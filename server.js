@@ -1,5 +1,5 @@
 const tmi = require('tmi.js');
-const axios =require('axios');
+const axios = require('axios');
 const Bottleneck = require('bottleneck');
 const express = require('express');
 
@@ -35,10 +35,11 @@ const client = new tmi.Client({
 });
 
 // Set a default User Agent if one is not set in the environment variables.
-const USER_AGENT = process.env.USER_AGENT || 'EveTwitchMarketBot/1.4.0 (Contact: YourEmailOrDiscord)'; // Customize this
+const USER_AGENT = process.env.USER_AGENT || 'EveTwitchMarketBot/1.5.0 (Contact: YourEmailOrDiscord)'; // Customize this
 
 // Caches
 const typeIDCache = new Map();
+const corpIDCache = new Map(); // <-- NEW: Cache for Corporation IDs
 const manufacturingCache = new Map(); // Cache for product manufacturing data
 
 const JITA_SYSTEM_ID = 30000142; // Jita system ID
@@ -133,7 +134,6 @@ async function fetchMarketData(itemName, typeID, channel, quantity = 1) {
 }
 
 async function fetchMarketDataFromESI(itemName, typeID, channel, quantity = 1, retryCount = 0) {
-    // This function is correct and remains unchanged.
     try {
         console.log(`[fetchMarketDataFromESI] Start ESI Call: Fetching for ${itemName} (TypeID: ${typeID}), Quantity: ${quantity}, Retry: ${retryCount}`);
         const isPlex = (typeID === PLEX_TYPE_ID);
@@ -194,7 +194,6 @@ async function fetchMarketDataFromESI(itemName, typeID, channel, quantity = 1, r
 }
 
 async function getLowestSellPrice(typeID) {
-    // This function is correct and remains unchanged.
     const isPlex = (typeID === PLEX_TYPE_ID);
     const targetRegionId = isPlex ? GLOBAL_PLEX_REGION_ID : JITA_REGION_ID;
     const sellOrdersURL = `https://esi.evetech.net/latest/markets/${targetRegionId}/orders/?datasource=tranquility&order_type=sell&type_id=${typeID}`;
@@ -230,15 +229,9 @@ async function getLowestSellPrice(typeID) {
     }
 }
 
-/**
- * Fetches manufacturing data for a given product from EveRef and calculates its build cost.
- * @param {string} productName - The name of the item to build.
- * @param {string} channel - The Twitch channel to send messages to.
- */
 async function fetchBlueprintCost(productName, channel) {
     await safeSay(channel, `Checking recipe for "${productName}"...`);
     try {
-        // Step 1: Find the TypeID for the *product* itself.
         const productTypeID = await getItemTypeID(productName);
 
         if (!productTypeID) {
@@ -246,7 +239,6 @@ async function fetchBlueprintCost(productName, channel) {
             return;
         }
         
-        // Step 2: Check cache for the product's manufacturing data.
         if (manufacturingCache.has(productTypeID)) {
              console.log(`[fetchBlueprintCost] Manufacturing cache HIT for ${productName} (ID: ${productTypeID})`);
              const manufacturingData = manufacturingCache.get(productTypeID);
@@ -254,7 +246,6 @@ async function fetchBlueprintCost(productName, channel) {
              return;
         }
 
-        // Step 3: Fetch the product's data from EveRef using its TypeID.
         const eveRefApiUrl = `https://everef.net/type/${productTypeID}.json`;
         console.log(`[fetchBlueprintCost] Fetching product data from EveRef: ${eveRefApiUrl}`);
         
@@ -265,14 +256,13 @@ async function fetchBlueprintCost(productName, channel) {
         
         const productData = productRes.data;
 
-        // Step 4: Validate the response has the necessary manufacturing data.
         if (productRes.status !== 200 || !productData.manufacturing || !productData.manufacturing.materials) {
             await safeSay(channel, `❌ No manufacturing recipe found for "${productName}". It may be a non-buildable item (e.g., a faction drop or PLEX). ❌`);
             return;
         }
         
         const manufacturingData = productData.manufacturing;
-        manufacturingCache.set(productTypeID, manufacturingData); // Cache the successful result
+        manufacturingCache.set(productTypeID, manufacturingData);
         await calculateAndSendBlueprintCost(productName, manufacturingData, channel);
 
     } catch (error) {
@@ -287,12 +277,6 @@ async function fetchBlueprintCost(productName, channel) {
     }
 }
 
-/**
- * Calculates material cost, fetches product sell price, and sends the final message.
- * @param {string} productName - The name of the final product.
- * @param {object} manufacturingData - The manufacturing object from EveRef.
- * @param {string} channel - The Twitch channel.
- */
 async function calculateAndSendBlueprintCost(productName, manufacturingData, channel) {
     await safeSay(channel, `Calculating material costs for "${productName}"... This may take a moment.`);
 
@@ -342,9 +326,145 @@ async function calculateAndSendBlueprintCost(productName, manufacturingData, cha
     await safeSay(channel, message);
 }
 
+// --- NEW LP STORE FUNCTIONS ---
+
+/**
+ * Fetches the Corporation ID for a given corporation name.
+ * @param {string} corpName - The name of the corporation.
+ * @returns {Promise<number|null>} The corporation ID or null if not found.
+ */
+async function getCorporationID(corpName) {
+    const lowerCaseCorpName = corpName.toLowerCase();
+    if (corpIDCache.has(lowerCaseCorpName)) {
+        console.log(`[getCorporationID] Cache HIT for "${corpName}"`);
+        return corpIDCache.get(lowerCaseCorpName);
+    }
+
+    console.log(`[getCorporationID] Cache MISS for "${corpName}". Fetching from ESI...`);
+    try {
+        const searchUrl = `https://esi.evetech.net/latest/search/?datasource=tranquility&categories=corporation&search=${encodeURIComponent(corpName)}&strict=false`;
+        const searchRes = await apiLimiter.schedule(() => axios.get(searchUrl, {
+            headers: { 'User-Agent': USER_AGENT },
+            timeout: 5000
+        }));
+
+        if (searchRes.data.corporation && searchRes.data.corporation.length > 0) {
+            const corpID = searchRes.data.corporation[0];
+            console.log(`[getCorporationID] ESI Success: Found Corp ID ${corpID} for "${corpName}"`);
+            corpIDCache.set(lowerCaseCorpName, corpID);
+            return corpID;
+        } else {
+            console.warn(`[getCorporationID] ESI Warning: No match found for corp "${corpName}".`);
+            return null;
+        }
+    } catch (error) {
+        console.error(`[getCorporationID] Error fetching Corp ID from ESI for "${corpName}": ${error.message}`);
+        return null;
+    }
+}
+
+/**
+ * Fetches LP store data, calculates costs and profits, and sends the message.
+ * @param {string} corpName - The corporation name for the LP store.
+ * @param {string} itemName - The item to look up in the store.
+ * @param {string} channel - The Twitch channel to send the message to.
+ */
+async function fetchLpOffer(corpName, itemName, channel) {
+    await safeSay(channel, `Looking up "${itemName}" in the "${corpName}" LP store...`);
+
+    try {
+        // Step 1: Get Corporation and Item IDs
+        const [corpID, itemTypeID] = await Promise.all([
+            getCorporationID(corpName),
+            getItemTypeID(itemName)
+        ]);
+
+        if (!corpID) {
+            await safeSay(channel, `❌ Could not find a corporation named "${corpName}". Please check the spelling. ❌`);
+            return;
+        }
+        if (!itemTypeID) {
+            await safeSay(channel, `❌ Could not find an item named "${itemName}". Please check the spelling. ❌`);
+            return;
+        }
+
+        // Step 2: Fetch LP Store Offers from ESI
+        const offersUrl = `https://esi.evetech.net/latest/loyalty/stores/${corpID}/offers/?datasource=tranquility`;
+        const offersRes = await apiLimiter.schedule(() => axios.get(offersUrl, {
+            headers: { 'User-Agent': USER_AGENT },
+            timeout: 10000
+        }));
+        
+        const offer = offersRes.data.find(o => o.type_id === itemTypeID);
+
+        if (!offer) {
+            await safeSay(channel, `❌ The item "${itemName}" was not found in the "${corpName}" LP store. ❌`);
+            return;
+        }
+
+        // Step 3: Calculate costs and send the final message
+        await calculateAndSendLpOfferCost(itemName, offer, channel);
+
+    } catch (error) {
+        console.error(`[fetchLpOffer] General error for "${corpName}" / "${itemName}": ${error.message}`);
+        await safeSay(channel, `❌ An internal error occurred while fetching LP store data. ❌`);
+    }
+}
+
+/**
+ * Performs the final calculation and formatting for the !lp command.
+ * @param {string} itemName - The name of the final product.
+ * @param {object} offer - The LP store offer object from ESI.
+ * @param {string} channel - The Twitch channel.
+ */
+async function calculateAndSendLpOfferCost(itemName, offer, channel) {
+    await safeSay(channel, `Calculating costs for "${itemName}"... This may take a moment.`);
+
+    let totalMaterialCost = offer.isk_cost;
+    let missingPrices = [];
+
+    // Fetch prices for all required items
+    const pricePromises = offer.required_items.map(async (material) => {
+        const price = await getLowestSellPrice(material.type_id);
+        if (price !== null) {
+            totalMaterialCost += price * material.quantity;
+        } else {
+            const materialName = getTypeNameByID(material.type_id);
+            missingPrices.push(materialName);
+            console.warn(`[calculateAndSendLpOfferCost] Missing price for material: ${materialName} (ID: ${material.type_id})`);
+        }
+    });
+
+    const productSellPricePromise = getLowestSellPrice(offer.type_id);
+    const [productSellPrice] = await Promise.all([productSellPricePromise, ...pricePromises]);
+    
+    const formatIsk = (amount) => parseFloat(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const formatLp = (amount) => amount.toLocaleString();
+
+    if (productSellPrice === null) {
+        await safeSay(channel, `❌ Could not fetch the Jita sell price for "${itemName}", cannot calculate profit. ❌`);
+        return;
+    }
+
+    const profit = productSellPrice - totalMaterialCost;
+    const iskPerLp = profit / offer.lp_cost;
+
+    let message = `${itemName} — Cost: ${formatLp(offer.lp_cost)} LP + ${formatIsk(totalMaterialCost)} ISK`;
+    message += ` | Jita Sell: ${formatIsk(productSellPrice)} ISK`;
+    message += ` | Profit: ${formatIsk(profit)} ISK`;
+    message += ` | Ratio: ${formatIsk(iskPerLp)} ISK/LP`;
+
+    if (missingPrices.length > 0) {
+        const displayedMissing = missingPrices.length > 3 ? missingPrices.slice(0, 3).join(', ') + '...' : missingPrices.join(', ');
+        message += ` (Prices missing for: ${displayedMissing})`;
+    }
+
+    await safeSay(channel, message);
+}
+
+
 // Function to handle commands from Twitch chat
 client.on('message', (channel, userstate, message, self) => {
-    // This function is correct and remains unchanged.
     if (self) return;
 
     const args = message.trim().split(/\s+/);
@@ -389,7 +509,23 @@ client.on('message', (channel, userstate, message, self) => {
             return;
         }
         fetchBlueprintCost(itemName, channel);
-    } else if (commandName === '!info') {
+    } else if (commandName === '!lp') { // <-- NEW COMMAND HANDLER
+        const fullArgs = args.join(' ');
+        if (!fullArgs.includes('|')) {
+            safeSay(channel, '❌ Usage: !lp <corporation name> | <item name> ❌');
+            return;
+        }
+        const parts = fullArgs.split('|').map(p => p.trim());
+        const corpName = parts[0];
+        const itemName = parts[1];
+
+        if (!corpName || !itemName) {
+            safeSay(channel, '❌ Usage: !lp <corporation name> | <item name> ❌');
+            return;
+        }
+        fetchLpOffer(corpName, itemName, channel);
+    }
+    else if (commandName === '!info') {
         const itemName = args.join(' ');
         if (!itemName) {
             safeSay(channel, '❌ Please specify an item name. Usage: !info <item name> ❌');
@@ -418,7 +554,6 @@ client.on('message', (channel, userstate, message, self) => {
 });
 
 async function getItemTypeID(itemName) {
-    // This function is correct and remains unchanged.
     const lowerCaseItemName = itemName.toLowerCase();
 
     if (isEveFilesTypeIDMapLoaded && eveFilesTypeIDMap.has(lowerCaseItemName)) {
