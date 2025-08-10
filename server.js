@@ -36,14 +36,14 @@ const client = new tmi.Client({
         skipMembership: true // Skip JOIN/PART messages for other users
     },
     identity: {
-        username: 'The_Rusty_Bot',
+        username: 'eve_twitch_market_bot',
         password: oauthToken // Ensure this includes 'chat:read' and 'chat:edit' scopes
     },
     channels: ['ne_x_is', 'contempoenterprises'] // Channels the bot should join
 });
 
 // Set a default User Agent if one is not set in the environment variables.
-const USER_AGENT = process.env.USER_AGENT || 'TheRustyBot/1.5.0 (Contact: YourEmailOrDiscord)'; // Customize this
+const USER_AGENT = process.env.USER_AGENT || 'EveTwitchMarketBot/1.5.0 (Contact: YourEmailOrDiscord)'; // Customize this
 
 // Caches
 const typeIDCache = new Map();
@@ -103,7 +103,7 @@ client.on('connected', (addr, port) => {
         console.log(`📤 Scheduling initial connection message to ${testChannel}`);
         chatLimiter.schedule(() => {
             console.log(`📨 Sending initial connection message to ${testChannel}`);
-            return client.say(testChannel, 'The_Rusty_Bot connected and ready!')
+            return client.say(testChannel, 'eve_twitch_market_bot connected and ready!')
                 .then((data) => {
                     console.log(`✅ Connection confirmation sent to ${testChannel}. Response:`, data);
                 })
@@ -146,10 +146,10 @@ client.on('notice', (channel, msgid, message) => {
     if (msgid === 'no_permission') {
         console.error(`🚨 PERMISSION DENIED in ${channel}!`);
         console.error(`🚨 The bot cannot send messages. Possible solutions:`);
-        console.error(`🚨 1. Make sure The_Rusty_Bot is a moderator: /mod The_Rusty_Bot`);
+        console.error(`🚨 1. Make sure eve_twitch_market_bot is a moderator: /mod eve_twitch_market_bot`);
         console.error(`🚨 2. Check if channel has restrictions (follower-only mode, etc.)`);
         console.error(`🚨 3. Verify the OAuth token has correct scopes (chat:read, chat:edit)`);
-        console.error(`🚨 4. Try refreshing mod status: /unmod The_Rusty_Bot then /mod The_Rusty_Bot`);
+        console.error(`🚨 4. Try refreshing mod status: /unmod eve_twitch_market_bot then /mod eve_twitch_market_bot`);
     }
 });
 
@@ -186,12 +186,33 @@ async function safeSay(channel, message) {
         // Try sending the message with better error handling
         try {
             console.log(`[safeSay] 🚀 Calling client.say() for ${channel}...`);
+            console.log(`[safeSay] 🔍 Message content: "${message}"`);
+            console.log(`[safeSay] 🔍 Message length: ${message.length} characters`);
+            
             const result = await client.say(channel, message);
             console.log(`[safeSay] ✅ client.say() returned successfully. Response:`, result);
             
-            // Wait a moment to see if we get a permission error via notice event
-            await new Promise(resolve => setTimeout(resolve, 200));
-            console.log(`[safeSay] 📋 No immediate errors detected for ${channel}`);
+            // Check if the message actually went through by monitoring for our own message
+            let messageReceived = false;
+            const messageHandler = (ch, tags, msg, self) => {
+                if (self && ch === channel && msg === message) {
+                    messageReceived = true;
+                    console.log(`[safeSay] 🎉 SUCCESS: Our message appeared in chat!`);
+                }
+            };
+            
+            client.on('message', messageHandler);
+            
+            // Wait to see if we get a permission error or see our own message
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            client.removeListener('message', messageHandler);
+            
+            if (!messageReceived) {
+                console.log(`[safeSay] ⚠️  WARNING: Message sent but not detected in chat stream`);
+            }
+            
+            console.log(`[safeSay] 📋 Final status - Sent: true, Detected: ${messageReceived}`);
             
             return result;
         } catch (err) {
@@ -205,7 +226,7 @@ async function safeSay(channel, message) {
             // If permission error, suggest solutions
             if (err.message && err.message.includes('permission')) {
                 console.error(`[safeSay] 💡 SOLUTION: The bot needs proper permissions in ${channel}`);
-                console.error(`[safeSay] 💡 Try: /unmod The_Rusty_Bot && /mod The_Rusty_Bot`);
+                console.error(`[safeSay] 💡 Try: /unmod eve_twitch_market_bot && /mod eve_twitch_market_bot`);
                 console.error(`[safeSay] 💡 Or check if there are chat restrictions (follower-only, etc.)`);
             }
             
@@ -653,7 +674,7 @@ client.on('message', (channel, userstate, message, self) => {
             setTimeout(() => {
                 client.join(channel).then(() => {
                     console.log(`[rejoin] Successfully rejoined ${channel}`);
-                    safeSay(channel, `The_Rusty_Bot rejoined and refreshed permissions!`);
+                    safeSay(channel, `eve_twitch_market_bot rejoined and refreshed permissions!`);
                 }).catch(err => {
                     console.error(`[rejoin] Failed to rejoin ${channel}:`, err);
                 });
@@ -664,7 +685,26 @@ client.on('message', (channel, userstate, message, self) => {
     } else if (commandName === '!test') {
         // Simple test command to verify message sending
         console.log(`[client.on('message')] Test command received in ${channel}`);
-        safeSay(channel, `Test message from The_Rusty_Bot - if you see this, messaging works!`);
+        safeSay(channel, `Hello from eve_twitch_market_bot!`);
+    } else if (commandName === '!simple') {
+        // Ultra simple test
+        console.log(`[client.on('message')] Simple test in ${channel}`);
+        safeSay(channel, `Hi!`);
+    } else if (commandName === '!raw') {
+        // Raw test bypassing safeSay
+        console.log(`[client.on('message')] Raw test bypassing rate limiter`);
+        client.say(channel, `Raw message test`)
+            .then(result => console.log(`Raw message result:`, result))
+            .catch(err => console.error(`Raw message error:`, err));
+    } else if (commandName === '!whisper') {
+        // Test whisper to see if that works
+        const username = args[0];
+        if (username) {
+            console.log(`[client.on('message')] Whisper test to ${username}`);
+            client.whisper(username, `Whisper test from eve_twitch_market_bot!`)
+                .then(() => console.log(`Whisper sent to ${username}`))
+                .catch(err => console.error(`Whisper failed:`, err));
+        }
     }
 });
 
@@ -724,7 +764,7 @@ app.listen(port, () => {
 });
 
 app.get('/', (req, res) => {
-    res.status(200).send('The Rusty Bot (Eve Market Bot) is running and healthy.');
+    res.status(200).send('Eve Twitch Market Bot is running and healthy.');
 });
 
 app.get('/_health', (req, res) => {
@@ -737,4 +777,4 @@ app.get('/_health', (req, res) => {
     }
 });
 
-console.log("The Rusty Bot (Eve Market Bot) script finished loading. Waiting for connection and messages...");
+console.log("Eve Twitch Market Bot script finished loading. Waiting for connection and messages...");

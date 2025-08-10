@@ -2,7 +2,7 @@
   "engines": {
     "node": ">=14.x"
   },
-  "name": "the-rusty-bot",
+  "name": "eve-market-bot",
   "version": "1.0.0",
   "main": "server.js",
   "dependencies": {
