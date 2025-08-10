@@ -125,8 +125,8 @@ client.on('join', (channel, username, self) => {
         // Check bot's status in the channel
         setTimeout(() => {
             const isMod = client.isMod(channel, client.getUsername());
-            const isVip = client.isVip(channel, client.getUsername());
-            console.log(`🔍 Bot status in ${channel}: Mod=${isMod}, VIP=${isVip}`);
+            console.log(`🔍 Bot status in ${channel}: Mod=${isMod}`);
+            // Note: isVip() is not available in this tmi.js version
         }, 2000); // Wait 2 seconds for Twitch to update status
     } else {
         console.log(`👤 User ${username} joined ${channel}`);
@@ -170,8 +170,8 @@ async function safeSay(channel, message) {
         
         // Check bot permissions
         const isMod = client.isMod(channel, client.getUsername());
-        const isVip = client.isVip(channel, client.getUsername());
-        console.log(`[safeSay] Bot permissions in ${channel}: Mod=${isMod}, VIP=${isVip}`);
+        console.log(`[safeSay] Bot permissions in ${channel}: Mod=${isMod}`);
+        // Note: isVip() is not available in this tmi.js version
         
         return client.say(channel, message)
             .then((data) => {
