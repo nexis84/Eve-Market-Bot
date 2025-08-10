@@ -141,6 +141,16 @@ client.on('part', (channel, username, self) => {
 
 client.on('notice', (channel, msgid, message) => {
     console.log(`📢 Notice in ${channel} [${msgid}]: ${message}`);
+    
+    // Handle permission errors specifically
+    if (msgid === 'no_permission') {
+        console.error(`🚨 PERMISSION DENIED in ${channel}!`);
+        console.error(`🚨 The bot cannot send messages. Possible solutions:`);
+        console.error(`🚨 1. Make sure The_Rusty_Bot is a moderator: /mod The_Rusty_Bot`);
+        console.error(`🚨 2. Check if channel has restrictions (follower-only mode, etc.)`);
+        console.error(`🚨 3. Verify the OAuth token has correct scopes (chat:read, chat:edit)`);
+        console.error(`🚨 4. Try refreshing mod status: /unmod The_Rusty_Bot then /mod The_Rusty_Bot`);
+    }
 });
 
 client.on('disconnected', (reason) => {
@@ -162,7 +172,7 @@ loadEveFilesTypeIDs().then(() => {
 });
 
 async function safeSay(channel, message) {
-    return chatLimiter.schedule(() => {
+    return chatLimiter.schedule(async () => {
         console.log(`[safeSay] Attempting to send to ${channel}: "${message.substring(0, 50)}..."`);
         console.log(`[safeSay] Client ready state: ${client.readyState()}`);
         console.log(`[safeSay] Bot username: ${client.getUsername()}`);
@@ -173,28 +183,32 @@ async function safeSay(channel, message) {
         console.log(`[safeSay] Bot permissions in ${channel}: Mod=${isMod}`);
         // Note: isVip() is not available in this tmi.js version
         
-        return client.say(channel, message)
-            .then((data) => {
-                console.log(`[safeSay] ✅ Message sent successfully to ${channel}. Response:`, data);
-                return data;
-            })
-            .catch(err => {
-                console.error(`[safeSay] ❌ ERROR sending message to ${channel}:`, err);
-                console.error(`[safeSay] Error details - Code: ${err.code}, Message: ${err.message}`);
-                if (err.response) {
-                    console.error(`[safeSay] Twitch response:`, err.response);
-                }
-                
-                // If permission error, suggest solutions
-                if (err.message && err.message.includes('permission')) {
-                    console.error(`[safeSay] 💡 SOLUTION: Try these commands in ${channel}:`);
-                    console.error(`[safeSay] 💡 1. /unmod The_Rusty_Bot`);
-                    console.error(`[safeSay] 💡 2. /mod The_Rusty_Bot`);
-                    console.error(`[safeSay] 💡 3. Or try /vip The_Rusty_Bot`);
-                }
-                
-                throw err;
-            });
+        // Try sending the message with better error handling
+        try {
+            const result = await client.say(channel, message);
+            console.log(`[safeSay] ✅ Message sent successfully to ${channel}. Response:`, result);
+            
+            // Wait a moment to see if we get a permission error
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            return result;
+        } catch (err) {
+            console.error(`[safeSay] ❌ ERROR sending message to ${channel}:`, err);
+            console.error(`[safeSay] Error details - Code: ${err.code}, Message: ${err.message}`);
+            
+            if (err.response) {
+                console.error(`[safeSay] Twitch response:`, err.response);
+            }
+            
+            // If permission error, suggest solutions
+            if (err.message && err.message.includes('permission')) {
+                console.error(`[safeSay] 💡 SOLUTION: The bot needs proper permissions in ${channel}`);
+                console.error(`[safeSay] 💡 Try: /unmod The_Rusty_Bot && /mod The_Rusty_Bot`);
+                console.error(`[safeSay] 💡 Or check if there are chat restrictions (follower-only, etc.)`);
+            }
+            
+            throw err;
+        }
     });
 }
 
