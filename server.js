@@ -185,15 +185,17 @@ async function safeSay(channel, message) {
         
         // Try sending the message with better error handling
         try {
+            console.log(`[safeSay] 🚀 Calling client.say() for ${channel}...`);
             const result = await client.say(channel, message);
-            console.log(`[safeSay] ✅ Message sent successfully to ${channel}. Response:`, result);
+            console.log(`[safeSay] ✅ client.say() returned successfully. Response:`, result);
             
-            // Wait a moment to see if we get a permission error
-            await new Promise(resolve => setTimeout(resolve, 100));
+            // Wait a moment to see if we get a permission error via notice event
+            await new Promise(resolve => setTimeout(resolve, 200));
+            console.log(`[safeSay] 📋 No immediate errors detected for ${channel}`);
             
             return result;
         } catch (err) {
-            console.error(`[safeSay] ❌ ERROR sending message to ${channel}:`, err);
+            console.error(`[safeSay] ❌ client.say() threw an error for ${channel}:`, err);
             console.error(`[safeSay] Error details - Code: ${err.code}, Message: ${err.message}`);
             
             if (err.response) {
@@ -659,6 +661,10 @@ client.on('message', (channel, userstate, message, self) => {
         }).catch(err => {
             console.error(`[rejoin] Error during rejoin process:`, err);
         });
+    } else if (commandName === '!test') {
+        // Simple test command to verify message sending
+        console.log(`[client.on('message')] Test command received in ${channel}`);
+        safeSay(channel, `Test message from The_Rusty_Bot - if you see this, messaging works!`);
     }
 });
 
