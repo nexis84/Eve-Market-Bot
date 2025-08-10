@@ -32,7 +32,7 @@ const oauthToken = process.env.TWITCH_OAUTH_TOKEN.startsWith('oauth:')
 // Twitch Bot Configuration
 const client = new tmi.Client({
     options: { 
-        debug: true, // <--- ENABLED TMI.JS DEBUG LOGGING to troubleshoot message sending issues --->
+        debug: false, // <--- DISABLED TMI.JS DEBUG LOGGING to reduce chat message logs --->
         skipMembership: true // Skip JOIN/PART messages for other users
     },
     identity: {
