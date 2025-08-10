@@ -31,7 +31,10 @@ const oauthToken = process.env.TWITCH_OAUTH_TOKEN.startsWith('oauth:')
 
 // Twitch Bot Configuration
 const client = new tmi.Client({
-    options: { debug: false }, // <--- DISABLED TMI.JS DEBUG LOGGING to reduce chat message logs --->
+    options: { 
+        debug: true, // <--- ENABLED TMI.JS DEBUG LOGGING to troubleshoot message sending issues --->
+        skipMembership: true // Skip JOIN/PART messages for other users
+    },
     identity: {
         username: 'The_Rusty_Bot',
         password: oauthToken // Ensure this includes 'chat:read' and 'chat:edit' scopes
@@ -91,19 +94,56 @@ async function loadEveFilesTypeIDs() {
 
 // --- TMI Event Listeners ---
 client.on('connected', (addr, port) => {
-    console.log(`* Connected to Twitch chat (${addr}:${port}). State: ${client.readyState()}`);
+    console.log(`✅ Connected to Twitch chat (${addr}:${port}). State: ${client.readyState()}`);
+    console.log(`🤖 Bot username: ${client.getUsername()}`);
+    console.log(`📺 Target channels: ${JSON.stringify(client.opts.channels)}`);
+    
     if (client.opts.channels && client.opts.channels.length > 0) {
         const testChannel = client.opts.channels[0];
+        console.log(`📤 Scheduling initial connection message to ${testChannel}`);
         chatLimiter.schedule(() => {
-            console.log(`Attempting initial connection message to ${testChannel}`);
+            console.log(`📨 Sending initial connection message to ${testChannel}`);
             return client.say(testChannel, 'The_Rusty_Bot connected and ready!')
-                .then(() => console.log(`Sent connection confirmation to ${testChannel}`))
-                .catch(err => console.error(`>>>> FAILED to send connection confirmation to ${testChannel}:`, err));
+                .then((data) => {
+                    console.log(`✅ Connection confirmation sent to ${testChannel}. Response:`, data);
+                })
+                .catch(err => {
+                    console.error(`❌ FAILED to send connection confirmation to ${testChannel}:`, err);
+                    console.error(`❌ Error details:`, {
+                        code: err.code,
+                        message: err.message,
+                        response: err.response
+                    });
+                });
         });
     }
 });
-client.on('disconnected', (reason) => console.error(`Twitch client disconnected: ${reason}. State: ${client.readyState()}`));
-client.on('error', (err) => console.error('>>>>>> Twitch client library error:', err));
+
+client.on('join', (channel, username, self) => {
+    if (self) {
+        console.log(`🎯 Successfully joined channel: ${channel}`);
+    } else {
+        console.log(`👤 User ${username} joined ${channel}`);
+    }
+});
+
+client.on('part', (channel, username, self) => {
+    if (self) {
+        console.log(`👋 Left channel: ${channel}`);
+    }
+});
+
+client.on('notice', (channel, msgid, message) => {
+    console.log(`📢 Notice in ${channel} [${msgid}]: ${message}`);
+});
+
+client.on('disconnected', (reason) => {
+    console.error(`❌ Twitch client disconnected: ${reason}. State: ${client.readyState()}`);
+});
+
+client.on('error', (err) => {
+    console.error('❌ Twitch client library error:', err);
+});
 // --- End TMI Event Listeners ---
 
 loadEveFilesTypeIDs().then(() => {
@@ -118,9 +158,23 @@ loadEveFilesTypeIDs().then(() => {
 async function safeSay(channel, message) {
     return chatLimiter.schedule(() => {
         console.log(`[safeSay] Attempting to send to ${channel}: "${message.substring(0, 50)}..."`);
+        console.log(`[safeSay] Client ready state: ${client.readyState()}`);
+        console.log(`[safeSay] Bot username: ${client.getUsername()}`);
+        console.log(`[safeSay] Joined channels: ${JSON.stringify(client.getChannels())}`);
+        
         return client.say(channel, message)
-            .then(() => console.log(`[safeSay] Message supposedly sent successfully to ${channel}.`))
-            .catch(err => console.error(`[safeSay] >>>>> ERROR sending message to ${channel}:`, err));
+            .then((data) => {
+                console.log(`[safeSay] ✅ Message sent successfully to ${channel}. Response:`, data);
+                return data;
+            })
+            .catch(err => {
+                console.error(`[safeSay] ❌ ERROR sending message to ${channel}:`, err);
+                console.error(`[safeSay] Error details - Code: ${err.code}, Message: ${err.message}`);
+                if (err.response) {
+                    console.error(`[safeSay] Twitch response:`, err.response);
+                }
+                throw err;
+            });
     });
 }
 
