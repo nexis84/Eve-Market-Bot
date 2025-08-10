@@ -640,9 +640,25 @@ client.on('message', (channel, userstate, message, self) => {
             });
     } else if (commandName === '!ping') {
         const state = client.readyState();
-        const reply = `Pong! Bot is running. Twitch connection state: ${state}.`;
-        console.log(`[client.on('message')] Responding to !ping in ${channel} with state ${state}`);
+        const isMod = client.isMod(channel, client.getUsername());
+        const reply = `Pong! Bot is running. Twitch connection state: ${state}. Mod status: ${isMod}`;
+        console.log(`[client.on('message')] Responding to !ping in ${channel} with state ${state}, mod=${isMod}`);
         safeSay(channel, reply);
+    } else if (commandName === '!rejoin') {
+        // Command to make the bot leave and rejoin to refresh permissions
+        console.log(`[client.on('message')] Rejoin requested in ${channel}`);
+        client.part(channel).then(() => {
+            setTimeout(() => {
+                client.join(channel).then(() => {
+                    console.log(`[rejoin] Successfully rejoined ${channel}`);
+                    safeSay(channel, `The_Rusty_Bot rejoined and refreshed permissions!`);
+                }).catch(err => {
+                    console.error(`[rejoin] Failed to rejoin ${channel}:`, err);
+                });
+            }, 1000);
+        }).catch(err => {
+            console.error(`[rejoin] Error during rejoin process:`, err);
+        });
     }
 });
 
