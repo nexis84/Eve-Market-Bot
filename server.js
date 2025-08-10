@@ -122,6 +122,12 @@ client.on('connected', (addr, port) => {
 client.on('join', (channel, username, self) => {
     if (self) {
         console.log(`🎯 Successfully joined channel: ${channel}`);
+        // Check bot's status in the channel
+        setTimeout(() => {
+            const isMod = client.isMod(channel, client.getUsername());
+            const isVip = client.isVip(channel, client.getUsername());
+            console.log(`🔍 Bot status in ${channel}: Mod=${isMod}, VIP=${isVip}`);
+        }, 2000); // Wait 2 seconds for Twitch to update status
     } else {
         console.log(`👤 User ${username} joined ${channel}`);
     }
@@ -162,6 +168,11 @@ async function safeSay(channel, message) {
         console.log(`[safeSay] Bot username: ${client.getUsername()}`);
         console.log(`[safeSay] Joined channels: ${JSON.stringify(client.getChannels())}`);
         
+        // Check bot permissions
+        const isMod = client.isMod(channel, client.getUsername());
+        const isVip = client.isVip(channel, client.getUsername());
+        console.log(`[safeSay] Bot permissions in ${channel}: Mod=${isMod}, VIP=${isVip}`);
+        
         return client.say(channel, message)
             .then((data) => {
                 console.log(`[safeSay] ✅ Message sent successfully to ${channel}. Response:`, data);
@@ -173,6 +184,15 @@ async function safeSay(channel, message) {
                 if (err.response) {
                     console.error(`[safeSay] Twitch response:`, err.response);
                 }
+                
+                // If permission error, suggest solutions
+                if (err.message && err.message.includes('permission')) {
+                    console.error(`[safeSay] 💡 SOLUTION: Try these commands in ${channel}:`);
+                    console.error(`[safeSay] 💡 1. /unmod The_Rusty_Bot`);
+                    console.error(`[safeSay] 💡 2. /mod The_Rusty_Bot`);
+                    console.error(`[safeSay] 💡 3. Or try /vip The_Rusty_Bot`);
+                }
+                
                 throw err;
             });
     });
