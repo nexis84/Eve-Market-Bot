@@ -39,7 +39,7 @@ const client = new tmi.Client({
         username: 'eve_twitch_market_bot',
         password: oauthToken // Ensure this includes 'chat:read' and 'chat:edit' scopes
     },
-    channels: ['ne_x_is', 'contempoenterprises'] // Channels the bot should join
+    channels: ['ne_x_is', 'contempoenterprises', 'pyrophobic'] // Channels the bot should join
 });
 
 // Set a default User Agent if one is not set in the environment variables.
